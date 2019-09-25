@@ -50,7 +50,6 @@
 #include "applibs_versions.h"
 #include "epoll_timerfd_utilities.h"
 #include "i2c.h"
-#include "mt3620_avnet_dev.h"
 #include "deviceTwin.h"
 #include "azure_iot_utilities.h"
 #include "connection_strings.h"
@@ -62,6 +61,7 @@
 #include <applibs/wificonfig.h>
 #include <azureiot/iothub_device_client_ll.h>
 
+
 //// OLED
 #include "oled.h"
 
@@ -69,6 +69,14 @@
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <applibs/application.h>
+
+
+// By default, this sample is targeted at the MT3620 Reference Development Board (RDB).
+// This can be changed using the project property "Target Hardware Definition Directory".
+// This #include imports the sample_hardware abstraction from that hardware definition.
+#include <hw/sample_hardware.h>
+
+
 
 // Provide local access to variables in other files
 extern twin_t twinArray[];
@@ -431,14 +439,14 @@ static int InitPeripheralsAndHandlers(void)
 
 	// Open button A GPIO as input
 	Log_Debug("Opening Starter Kit Button A as input.\n");
-	buttonAGpioFd = GPIO_OpenAsInput(MT3620_RDB_BUTTON_A);
+	buttonAGpioFd = GPIO_OpenAsInput(AVNET_MT3620_SK_USER_BUTTON_A);
 	if (buttonAGpioFd < 0) {
 		Log_Debug("ERROR: Could not open button A GPIO: %s (%d).\n", strerror(errno), errno);
 		return -1;
 	}
 	// Open button B GPIO as input
 	Log_Debug("Opening Starter Kit Button B as input.\n");
-	buttonBGpioFd = GPIO_OpenAsInput(MT3620_RDB_BUTTON_B);
+	buttonBGpioFd = GPIO_OpenAsInput(AVNET_MT3620_SK_USER_BUTTON_B);
 	if (buttonBGpioFd < 0) {
 		Log_Debug("ERROR: Could not open button B GPIO: %s (%d).\n", strerror(errno), errno);
 		return -1;
