@@ -13,6 +13,18 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source Files\drivers">
+      <UniqueIdentifier>{41aa62ca-bd13-43a3-a4c7-bff466a33b6a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\drivers\BME680">
+      <UniqueIdentifier>{cbc341f8-3118-4c35-bb71-67a425eee912}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\drivers\LSM6DSO">
+      <UniqueIdentifier>{6e7aaa83-f6c0-4715-ad7c-92af0ddc67fc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\drivers\LPS22HH">
+      <UniqueIdentifier>{2cb65f49-7dd1-4e02-b5ab-c7ea7649e176}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
@@ -34,12 +46,6 @@
     <ClCompile Include="i2c.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="lps22hh_reg.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="lsm6dso_reg.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="parson.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -48,6 +54,18 @@
     </ClCompile>
     <ClCompile Include="sd1306.c">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\BME680\Self test\bme680_selftest.c">
+      <Filter>Source Files\drivers\BME680</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\BME680\bme680.c">
+      <Filter>Source Files\drivers\BME680</Filter>
+    </ClCompile>
+    <ClCompile Include="lsm6dso_reg.c">
+      <Filter>Source Files\drivers\LSM6DSO</Filter>
+    </ClCompile>
+    <ClCompile Include="lps22hh_reg.c">
+      <Filter>Source Files\drivers\LPS22HH</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -86,6 +104,15 @@
     </ClInclude>
     <ClInclude Include="sd1306.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\BME680\Self test\bme680_selftest.h">
+      <Filter>Source Files\drivers\BME680</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\BME680\bme680.h">
+      <Filter>Source Files\drivers\BME680</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\BME680\bme680_defs.h">
+      <Filter>Source Files\drivers\BME680</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -40,6 +40,7 @@
     <PartnerComponents>005180BC-402F-4CB3-A662-72937DBCDE47</PartnerComponents>
     <TargetHardwareDirectory>..\Hardware\avnet_mt3620_sk</TargetHardwareDirectory>
     <TargetHardwareDefinition>sample_hardware.json</TargetHardwareDefinition>
+    <IncludePath>drivers\BME680;$(SysRootIncludePath);$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
     <PartnerComponents>005180BC-402F-4CB3-A662-72937DBCDE47</PartnerComponents>
@@ -49,6 +50,8 @@
   <ItemGroup>
     <ClCompile Include="azure_iot_utilities.c" />
     <ClCompile Include="device_twin.c" />
+    <ClCompile Include="drivers\BME680\bme680.c" />
+    <ClCompile Include="drivers\BME680\Self test\bme680_selftest.c" />
     <ClCompile Include="i2c.c" />
     <ClCompile Include="lps22hh_reg.c" />
     <ClCompile Include="lsm6dso_reg.c" />
@@ -59,6 +62,9 @@
     <ClCompile Include="sd1306.c" />
     <ClInclude Include="azure_iot_utilities.h" />
     <ClInclude Include="build_options.h" />
+    <ClInclude Include="drivers\BME680\bme680.h" />
+    <ClInclude Include="drivers\BME680\bme680_defs.h" />
+    <ClInclude Include="drivers\BME680\Self test\bme680_selftest.h" />
     <ClInclude Include="font.h" />
     <ClInclude Include="connection_strings.h" />
     <ClInclude Include="deviceTwin.h" />
