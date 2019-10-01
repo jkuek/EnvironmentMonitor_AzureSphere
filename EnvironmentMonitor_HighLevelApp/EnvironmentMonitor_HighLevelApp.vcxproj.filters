@@ -25,6 +25,9 @@
     <Filter Include="Source Files\drivers\LPS22HH">
       <UniqueIdentifier>{2cb65f49-7dd1-4e02-b5ab-c7ea7649e176}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\libraries">
+      <UniqueIdentifier>{259684a4-bc74-47d5-880e-1340bd8617a9}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
@@ -113,6 +116,9 @@
     </ClInclude>
     <ClInclude Include="drivers\BME680\bme680_defs.h">
       <Filter>Source Files\drivers\BME680</Filter>
+    </ClInclude>
+    <ClInclude Include="sensors.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

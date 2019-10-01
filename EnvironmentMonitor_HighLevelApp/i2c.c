@@ -50,6 +50,12 @@
 #include "i2c.h"
 #include "lsm6dso_reg.h"
 #include "lps22hh_reg.h"
+#include "bme680.h"
+
+
+
+void InitBME680(void);
+void ReadBME680(void);
 
 /* Private variables ---------------------------------------------------------*/
 static axis3bit16_t data_raw_acceleration;
@@ -57,11 +63,7 @@ static axis3bit16_t data_raw_angular_rate;
 static axis3bit16_t raw_angular_rate_calibration;
 static axis1bit32_t data_raw_pressure;
 static axis1bit16_t data_raw_temperature;
-static float acceleration_mg[3];
-static float angular_rate_dps[3];
-static float lsm6dsoTemperature_degC;
-static float pressure_hPa;
-static float lps22hhTemperature_degC;
+
 
 static uint8_t whoamI, rst;
 static int accelTimerFd = -1;
@@ -71,10 +73,22 @@ lps22hh_ctx_t pressure_ctx;
 
 float altitude;
 
+struct
+{
+	struct AccelerometerData accelerometer;
+	struct GyroscopeData gyroscope;
+	float temperature;
+} lsm6dso_sensors;
+
+
+struct Lps22hhData lps22hh_sensors;
+
+struct bme680_dev gas_sensor;
+
 // Status variables
 uint8_t lsm6dso_status = 1;
 uint8_t lps22hh_status = 1;
-uint8_t RTCore_status = 1;
+//uint8_t RTCore_status = 1;
 
 //Extern variables
 int i2cFd = -1;
@@ -94,20 +108,66 @@ static int32_t lsm6dso_read_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data, ui
 /// <summary>
 ///     Sleep for delayTime ms
 /// </summary>
-void HAL_Delay(int delayTime) {
+void HAL_Delay(int delayTime)
+{
 	struct timespec ts;
 	ts.tv_sec = 0;
 	ts.tv_nsec = delayTime * 10000;
 	nanosleep(&ts, NULL);
 }
 
+bool GetNewAccelerometerData(struct AccelerometerData * ad)
+{
+	//Read output only if new xl value is available
+
+	uint8_t reg;
+	lsm6dso_xl_flag_data_ready_get(&dev_ctx, &reg);
+	if (!reg)
+	{
+		//no new data available
+		return false;
+	}
+
+	// Read acceleration field data
+	memset(data_raw_acceleration.u8bit, 0x00, 3 * sizeof(int16_t));
+	lsm6dso_acceleration_raw_get(&dev_ctx, data_raw_acceleration.u8bit);
+
+	ad->x = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[0]);
+	ad->y = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[1]);
+	ad->z = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[2]);
+
+	return true;
+}
+
+bool GetNewGyroscopeData(struct GyroscopeData* gd)
+{
+	uint8_t reg;
+	lsm6dso_gy_flag_data_ready_get(&dev_ctx, &reg);
+	if (!reg)
+	{
+		//no new data available
+		return false;
+	}
+
+	// Read angular rate field data
+	memset(data_raw_angular_rate.u8bit, 0x00, 3 * sizeof(int16_t));
+	lsm6dso_angular_rate_raw_get(&dev_ctx, data_raw_angular_rate.u8bit);
+
+	// Before we store the mdps values subtract the calibration data we captured at startup.
+	gd->x = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[0] - raw_angular_rate_calibration.i16bit[0])) / 1000.0;
+	gd->y = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[1] - raw_angular_rate_calibration.i16bit[1])) / 1000.0;
+	gd->z = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[2] - raw_angular_rate_calibration.i16bit[2])) / 1000.0;
+
+	return true;
+}
+
+
+
 /// <summary>
 ///     Print latest data from on-board sensors.
 /// </summary>
 void AccelTimerEventHandler(EventData *eventData)
 {
-	uint8_t reg;
-	lps22hh_reg_t lps22hhReg;
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 	static bool firstPass = true;
@@ -119,83 +179,48 @@ void AccelTimerEventHandler(EventData *eventData)
 		return;
 	}
 
-	// Read the sensors on the lsm6dso device
+	/* check each of the sensors in turn 
+		for each sensor that has new data available, add the key/value to the json object
+		finally, send the new data up to the cloud	
+	*/
 
-	//Read output only if new xl value is available
-	lsm6dso_xl_flag_data_ready_get(&dev_ctx, &reg);
-	if (reg)
+
+
+	//Read the LSM6DSO sensors
+	if (GetNewAccelerometerData(&lsm6dso_sensors.accelerometer))
 	{
-		// Read acceleration field data
-		memset(data_raw_acceleration.u8bit, 0x00, 3 * sizeof(int16_t));
-		lsm6dso_acceleration_raw_get(&dev_ctx, data_raw_acceleration.u8bit);
-
-		acceleration_mg[0] = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[0]);
-		acceleration_mg[1] = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[1]);
-		acceleration_mg[2] = lsm6dso_from_fs4_to_mg(data_raw_acceleration.i16bit[2]);
-
-		Log_Debug("\nLSM6DSO: Acceleration [mg]  : %.4lf, %.4lf, %.4lf\n",
-			acceleration_mg[0], acceleration_mg[1], acceleration_mg[2]);
+		Log_Debug("\nLSM6DSO: Acceleration [mg]  : %.4lf, %.4lf, %.4lf\n", 
+			lsm6dso_sensors.accelerometer.x, lsm6dso_sensors.accelerometer.y, lsm6dso_sensors.accelerometer.z);
+	}
+	
+	if (GetNewGyroscopeData(&lsm6dso_sensors.gyroscope))
+	{
+		Log_Debug("LSM6DSO: Angular rate [dps] : %4.2f, %4.2f, %4.2f\n",
+			lsm6dso_sensors.gyroscope.x, lsm6dso_sensors.gyroscope.y, lsm6dso_sensors.gyroscope.z);
 	}
 
-	lsm6dso_gy_flag_data_ready_get(&dev_ctx, &reg);
-	if (reg)
+	if (GetNewTemperatureData(&lsm6dso_sensors.temperature))
 	{
-		// Read angular rate field data
-		memset(data_raw_angular_rate.u8bit, 0x00, 3 * sizeof(int16_t));
-		lsm6dso_angular_rate_raw_get(&dev_ctx, data_raw_angular_rate.u8bit);
-
-		// Before we store the mdps values subtract the calibration data we captured at startup.
-		angular_rate_dps[0] = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[0] - raw_angular_rate_calibration.i16bit[0])) / 1000.0;
-		angular_rate_dps[1] = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[1] - raw_angular_rate_calibration.i16bit[1])) / 1000.0;
-		angular_rate_dps[2] = (lsm6dso_from_fs2000_to_mdps(data_raw_angular_rate.i16bit[2] - raw_angular_rate_calibration.i16bit[2])) / 1000.0;
-
-		Log_Debug("LSM6DSO: Angular rate [dps] : %4.2f, %4.2f, %4.2f\r\n",
-			angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2]);
-
+		Log_Debug("LSM6DSO: Temperature1 [degC]: %.2f\n", lsm6dso_sensors.temperature);
 	}
-
-	lsm6dso_temp_flag_data_ready_get(&dev_ctx, &reg);
-	if (reg)
+	 
+	// Read the LPS22HH sensors
+	if (GetLps22hhData(&lps22hh_sensors))
 	{
-		// Read temperature data
-		memset(data_raw_temperature.u8bit, 0x00, sizeof(int16_t));
-		lsm6dso_temperature_raw_get(&dev_ctx, data_raw_temperature.u8bit);
-		lsm6dsoTemperature_degC = lsm6dso_from_lsb_to_celsius(data_raw_temperature.i16bit);
-
-		Log_Debug("LSM6DSO: Temperature1 [degC]: %.2f\r\n", lsm6dsoTemperature_degC);
-	}
-
-	// Read the sensors on the lsm6dso device
-
-	lps22hh_read_reg(&pressure_ctx, LPS22HH_STATUS, (uint8_t *)&lps22hhReg, 1);
-
-	//Read output only if new value is available
-
-	if ((lps22hhReg.status.p_da == 1) && (lps22hhReg.status.t_da == 1))
-	{
-		memset(data_raw_pressure.u8bit, 0x00, sizeof(int32_t));
-		lps22hh_pressure_raw_get(&pressure_ctx, data_raw_pressure.u8bit);
-
-		pressure_hPa = lps22hh_from_lsb_to_hpa((uint32_t)data_raw_pressure.i32bit);
-
-		memset(data_raw_temperature.u8bit, 0x00, sizeof(int16_t));
-		lps22hh_temperature_raw_get(&pressure_ctx, data_raw_temperature.u8bit);
-		lps22hhTemperature_degC = lps22hh_from_lsb_to_celsius(data_raw_temperature.i16bit);
-
-		Log_Debug("LPS22HH: Pressure     [hPa] : %.2f\r\n", pressure_hPa);
-		Log_Debug("LPS22HH: Temperature2 [degC]: %.2f\r\n", lps22hhTemperature_degC);
+		Log_Debug("LPS22HH: Pressure     [hPa] : %.2f\n", lps22hh_sensors.pressure_hPa);
+		Log_Debug("LPS22HH: Temperature2 [degC]: %.2f\n", lps22hh_sensors.temperature_degC);
 	}
 
 
-	sensor_data.acceleration_mg[0] = acceleration_mg[0];
-	sensor_data.acceleration_mg[1] = acceleration_mg[1];
-	sensor_data.acceleration_mg[2] = acceleration_mg[2];
-	sensor_data.angular_rate_dps[0] = angular_rate_dps[0];
-	sensor_data.angular_rate_dps[1] = angular_rate_dps[1];
-	sensor_data.angular_rate_dps[2] = angular_rate_dps[2];
-	sensor_data.lsm6dsoTemperature_degC = lsm6dsoTemperature_degC;
-	sensor_data.lps22hhpressure_hPa = pressure_hPa;
-	sensor_data.lps22hhTemperature_degC = lps22hhTemperature_degC;
+	sensor_data.acceleration_mg[0] = lsm6dso_sensors.accelerometer.x;
+	sensor_data.acceleration_mg[1] = lsm6dso_sensors.accelerometer.y;
+	sensor_data.acceleration_mg[2] = lsm6dso_sensors.accelerometer.z;
+	sensor_data.angular_rate_dps[0] = lsm6dso_sensors.gyroscope.x;
+	sensor_data.angular_rate_dps[1] = lsm6dso_sensors.gyroscope.y;
+	sensor_data.angular_rate_dps[2] = lsm6dso_sensors.gyroscope.z;
+	sensor_data.lsm6dsoTemperature_degC = lsm6dso_sensors.temperature;
+	sensor_data.lps22hhpressure_hPa = lps22hh_sensors.pressure_hPa;
+	sensor_data.lps22hhTemperature_degC = lps22hh_sensors.temperature_degC;
 
 	/*
 	The ALTITUDE value calculated is actually "Pressure Altitude". This lacks correction for temperature (and humidity)
@@ -207,7 +232,8 @@ void AccelTimerEventHandler(EventData *eventData)
 	// weather.com formula
 	//altitude = 44307.69396 * (1 - powf((atm / 1013.25), 0.190284));  // pressure altitude in meters
 	// Bosch's formula
-	altitude = 44330 * (1 - powf((pressure_hPa / 1013.25), 1 / 5.255));  // pressure altitude in meters
+	altitude = 44330 * (1 - powf((lps22hh_sensors.pressure_hPa / 1013.25), 1 / 5.255));  // pressure altitude in meters
+
 
 	Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\r\n", light_sensor);
 
@@ -221,25 +247,67 @@ void AccelTimerEventHandler(EventData *eventData)
 	// will skew the data.
 	if (!firstPass) {
 
-		// Allocate memory for a telemetry message to Azure
-		char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
-		if (pjsonBuffer == NULL) {
-			Log_Debug("ERROR: not enough memory to send telemetry");
-		}
-		
-		snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
-			angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
+		//// Allocate memory for a telemetry message to Azure
+		//char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
+		//if (pjsonBuffer == NULL) {
+		//	Log_Debug("ERROR: not enough memory to send telemetry");
+		//}
+		//
+		//snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
+		//	angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
 
-		Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
-		AzureIoT_SendMessage(pjsonBuffer);
-		free(pjsonBuffer);
-
-}
+		//Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
+		//
+		//AzureIoT_SendMessage(pjsonBuffer);
+		//free(pjsonBuffer);
+	
+	}
 
 	firstPass = false;
 
 #endif 
 
+	ReadBME680();
+}
+
+bool GetNewTemperatureData(float * temperature)
+{
+	uint8_t reg;
+	lsm6dso_temp_flag_data_ready_get(&dev_ctx, &reg);
+	if (!reg)
+	{
+		return false;
+	}
+	// Read temperature data
+	memset(data_raw_temperature.u8bit, 0x00, sizeof(int16_t));
+	lsm6dso_temperature_raw_get(&dev_ctx, data_raw_temperature.u8bit);
+	*temperature = lsm6dso_from_lsb_to_celsius(data_raw_temperature.i16bit);
+
+	return true;
+}
+
+bool GetLps22hhData(struct Lps22hhData* s)
+{
+	lps22hh_reg_t lps22hhReg;
+	lps22hh_read_reg(&pressure_ctx, LPS22HH_STATUS, (uint8_t*)&lps22hhReg, 1);
+
+	//Read output only if new value is available
+
+	if ((lps22hhReg.status.p_da == 1) && (lps22hhReg.status.t_da == 1))
+	{
+		memset(data_raw_pressure.u8bit, 0x00, sizeof(int32_t));
+		lps22hh_pressure_raw_get(&pressure_ctx, data_raw_pressure.u8bit);
+
+		s->pressure_hPa = lps22hh_from_lsb_to_hpa((uint32_t)data_raw_pressure.i32bit);
+
+		memset(data_raw_temperature.u8bit, 0x00, sizeof(int16_t));
+		lps22hh_temperature_raw_get(&pressure_ctx, data_raw_temperature.u8bit);
+		s->temperature_degC = lps22hh_from_lsb_to_celsius(data_raw_temperature.i16bit);
+
+		return true;
+	}
+
+	return false;
 }
 
 /// <summary>
@@ -393,12 +461,13 @@ int initI2c(void) {
 	// is stationary.
 
 	uint8_t reg;
+	float angular_rate_dps[3];
 
-	
-	Log_Debug("LSM6DSO: Calibrating angular rate . . .\n"); 
+	Log_Debug("LSM6DSO: Calibrating angular rate ...\n"); 
 	Log_Debug("LSM6DSO: Please make sure the device is stationary.\n");
 
 	do {
+
 		// Read the calibration values
 		lsm6dso_gy_flag_data_ready_get(&dev_ctx, &reg);
 		if (reg)
@@ -426,8 +495,7 @@ int initI2c(void) {
 	// If the angular values after applying the offset are not zero, then do it again!
 	} while (angular_rate_dps[0] == angular_rate_dps[1] == angular_rate_dps[2] == 0.0);
 
-	Log_Debug("LSM6DSO: Calibrating angular rate complete!\n");
-
+	Log_Debug("LSM6DSO: Angular rate calibration complete!\n");
 
 	// Init the epoll interface to periodically run the AccelTimerEventHandler routine where we read the sensors
 
@@ -439,6 +507,8 @@ int initI2c(void) {
 	if (accelTimerFd < 0) {
 		return -1;
 	}
+
+	InitBME680();	
 
 	return 0;
 }
@@ -685,3 +755,217 @@ static int32_t lsm6dso_read_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data, ui
 	return ret;
 }
 
+
+void user_delay_ms(uint32_t period)
+{
+	/*
+	 * Return control or wait,
+	 * for a period amount of milliseconds
+	 */
+
+	struct timespec ts;
+	ts.tv_sec = 0;
+	ts.tv_nsec = period * 1000;
+	nanosleep(&ts, NULL);
+}
+
+
+int8_t user_i2c_read(uint8_t dev_id, uint8_t reg_addr, uint8_t* reg_data, uint16_t len)
+{
+	int8_t rslt = 0; /* Return 0 for Success, non-zero for failure */
+
+	//NOTE: the dev_id parameter contains the I2C address 
+
+#ifdef ENABLE_READ_WRITE_DEBUG
+	Log_Debug("I2C read reg %0x len %d\n", reg_addr, len);
+#endif
+
+#if 0
+	I2CMaster_WriteThenRead(i2cFd, dev_id, &reg_addr, 1, reg_data, len);
+#else
+	// Set the register address to read
+	int32_t retVal = I2CMaster_Write(i2cFd, dev_id, &reg_addr, 1);
+	if (retVal < 0) {
+		Log_Debug("ERROR: I2C write: errno=%d (%s)\n", errno, strerror(errno));
+		return -1;
+	}
+
+	uint16_t i = 0;
+
+	/*
+		there seems to be a bug where bad data is returned when reading more than 8 bytes at a time
+		so read in blocks of 8 bytes for now
+	*/
+
+	for (i = 0; i < len; i += 8)
+	{
+		uint16_t readLength = len - i;
+		if (readLength > 8)
+		{
+			readLength = 8;
+		}
+
+		retVal = I2CMaster_Read(i2cFd, dev_id, &reg_data[i], readLength);
+		if (retVal < 0) {
+			Log_Debug("ERROR: I2C read: errno=%d (%s)\n", errno, strerror(errno));
+			return -1;
+		}
+	}
+
+#endif
+
+#ifdef ENABLE_READ_WRITE_DEBUG
+	Log_Debug("Read returned: ");
+	for (int i = 0; i < len; i++) {
+		Log_Debug("%0x: ", bufp[i]);
+	}
+	Log_Debug("\n\n");
+#endif 	   
+
+	return 0;
+
+
+	return rslt;
+}
+
+
+int8_t user_i2c_write(uint8_t dev_id, uint8_t reg_addr, uint8_t* reg_data, uint16_t len)
+{
+	int8_t rslt = 0; /* Return 0 for Success, non-zero for failure */
+
+	//NOTE: the dev_id parameter contains the I2C address 
+
+#ifdef ENABLE_READ_WRITE_DEBUG
+	Log_Debug("I2C read reg %0x len %d\n", reg_addr, len);
+	Log_Debug("buffer contents: ");
+	for (int i = 0; i < len; i++) {
+
+		Log_Debug("%0x: ", reg_data[i]);
+	}
+	Log_Debug("\n");
+#endif 
+
+	// Construct a new command buffer that contains the register to write to, then the data to write
+	uint8_t cmdBuffer[len + 1];
+	cmdBuffer[0] = reg_addr;
+	for (int i = 0; i < len; i++) {
+		cmdBuffer[i + 1] = reg_data[i];
+	}
+
+#ifdef ENABLE_READ_WRITE_DEBUG
+	Log_Debug("cmdBuffer contents: ");
+	for (int i = 0; i < len + 1; i++) {
+
+		Log_Debug("%0x: ", cmdBuffer[i]);
+	}
+	Log_Debug("\n");
+#endif
+
+	// Write the data to the device
+	int32_t retVal = I2CMaster_Write(i2cFd, dev_id, cmdBuffer, (size_t)len + 1);
+	if (retVal < 0) {
+		Log_Debug("ERROR: I2C write: errno=%d (%s)\n", errno, strerror(errno));
+		rslt = -1;
+	}
+#ifdef ENABLE_READ_WRITE_DEBUG
+	else
+	{
+		Log_Debug("Wrote %d bytes to device.\n\n", retVal);
+	}
+#endif
+
+	return rslt;
+}
+
+
+void InitBME680(void)
+{
+	gas_sensor.dev_id = BME680_I2C_ADDR_SECONDARY;
+	gas_sensor.intf = BME680_I2C_INTF;
+	gas_sensor.read = user_i2c_read;
+	gas_sensor.write = user_i2c_write;
+	gas_sensor.delay_ms = user_delay_ms;
+	/* amb_temp can be set to 25 prior to configuring the gas sensor
+	 * or by performing a few temperature readings without operating the gas sensor.
+	 */
+	gas_sensor.amb_temp = 25;
+
+	int8_t rslt = BME680_OK;
+	rslt = bme680_init(&gas_sensor);
+
+	//configure the bme680 in forced mode
+
+	uint8_t set_required_settings;
+
+	/* Set the temperature, pressure and humidity settings */
+	gas_sensor.tph_sett.os_hum = BME680_OS_2X;
+	gas_sensor.tph_sett.os_pres = BME680_OS_4X;
+	gas_sensor.tph_sett.os_temp = BME680_OS_8X;
+	gas_sensor.tph_sett.filter = BME680_FILTER_SIZE_3;
+
+	/* Set the remaining gas sensor settings and link the heating profile */
+	gas_sensor.gas_sett.run_gas = BME680_ENABLE_GAS_MEAS;
+	/* Create a ramp heat waveform in 3 steps */
+	gas_sensor.gas_sett.heatr_temp = 320; /* degree Celsius */
+	gas_sensor.gas_sett.heatr_dur = 150; /* milliseconds */
+
+	/* Select the power mode */
+	/* Must be set before writing the sensor configuration */
+	gas_sensor.power_mode = BME680_FORCED_MODE;
+
+	/* Set the required sensor settings needed */
+	set_required_settings = BME680_OST_SEL | BME680_OSP_SEL | BME680_OSH_SEL | BME680_FILTER_SEL
+		| BME680_GAS_SENSOR_SEL;
+
+	/* Set the desired sensor configuration */
+	rslt = bme680_set_sensor_settings(set_required_settings, &gas_sensor);
+
+	/* Set the power mode */
+	rslt = bme680_set_sensor_mode(&gas_sensor);
+
+}
+
+
+void ReadBME680(void)
+{
+	int8_t rslt = BME680_OK;
+	/* Get the total measurement duration so as to sleep or wait till the measurement is complete */
+	uint16_t meas_period;
+	bme680_get_profile_dur(&meas_period, &gas_sensor);
+
+	struct bme680_field_data data;
+
+	//while (1)
+	{
+		user_delay_ms(meas_period); /* Delay till the measurement is ready */
+
+		rslt = bme680_get_sensor_data(&data, &gas_sensor);
+
+		Log_Debug("T: %.2f degC, P: %.2f hPa, H %.2f %%rH ", data.temperature / 100.0f,
+			data.pressure / 100.0f, data.humidity / 1000.0f);
+
+		/* Avoid using measurements from an unstable heating setup */
+		if (data.status & BME680_GASM_VALID_MSK)
+			Log_Debug(", G: %d ohms", data.gas_resistance);
+
+		Log_Debug("\n");
+
+		struct
+		{
+			float temperature;
+			float humidity;
+			float pressure;
+			float ambient_light;
+		}sensor_values;
+
+		sensor_values.ambient_light = light_sensor;
+		sensor_values.temperature = data.temperature/ 100.0f;
+		sensor_values.humidity = data.humidity / 1000.0f;
+		sensor_values.pressure = data.pressure / 100.0f;
+
+		/* Trigger the next measurement if you would like to read data out continuously */
+		if (gas_sensor.power_mode == BME680_FORCED_MODE) {
+			rslt = bme680_set_sensor_mode(&gas_sensor);
+		}
+	}
+}

@@ -2,7 +2,8 @@
    Licensed under the MIT License. */
 
    /************************************************************************************************
-   Name: AvnetStarterKitReferenceDesign
+
+   This project was originally based on the AvnetStarterKitReferenceDesign project but has been heavily modified.
    Sphere OS: 19.05
    This file contains the 'main' function. Program execution begins and ends there
 
@@ -77,7 +78,6 @@
 #include <hw/sample_hardware.h>
 
 
-
 // Provide local access to variables in other files
 extern twin_t twinArray[];
 extern int twinArraySize;
@@ -144,7 +144,7 @@ void SendTelemetryDataToAzure(void) {
 	struct
 	{
 		double temperature;
-		double pressure_hPa;
+		double pressure;
 		double humidity;
 		double iaq;
 		double ambient_light;
@@ -156,17 +156,22 @@ void SendTelemetryDataToAzure(void) {
 	JSON_Object* root_object = json_value_get_object(root_value);
 	char* serialized_string = NULL;
 	//json_object_set_string(root_object, "name", "John Smith");
-	json_object_set_number(root_object, "temperature", 25);
-	json_object_set_number(root_object, "pressure", 5);
-	json_object_set_number(root_object, "humidity", 1/3);
-	json_object_set_number(root_object, "iaq", 2);
-	json_object_set_number(root_object, "ambient_light", 123456789.1);
-	//json_object_dotset_string(root_object, "address.city", "Cupertino");
-	//json_object_dotset_value(root_object, "contact.emails", json_parse_string("[\"email@example.com\",\"email2@example.com\"]"));
-	//serialized_string = json_serialize_to_string_pretty(root_value);
+	json_object_set_number(root_object, "temperature", telemetryData.temperature);
+	json_object_set_number(root_object, "pressure", telemetryData.pressure);
+	json_object_set_number(root_object, "humidity", telemetryData.humidity);
+	//json_object_set_number(root_object, "iaq", 2);
+	if (RTCore_status == 0)
+	{
+		//we have comms with the M4 app, so these values should be good
+
+		json_object_set_number(root_object, "ambient_light", telemetryData.ambient_light);
+	}
 	serialized_string = json_serialize_to_string(root_value);
 
-	puts(serialized_string);
+	Log_Debug("Sending JSON string: %s", serialized_string);
+
+	AzureIoT_SendMessage(serialized_string);
+
 	json_free_serialized_string(serialized_string);
 	json_value_free(root_value);
 }
@@ -506,7 +511,7 @@ int main(int argc, char *argv[])
 	memset(ssid, 0, 128);
 
 	Log_Debug("Version String: %s\n", argv[1]);
-	Log_Debug("Avnet Starter Kit Simple Reference Application starting.\n");
+	Log_Debug("Environment Monitor - Azure Sphere starting.\n");
 	
     if (InitPeripheralsAndHandlers() != 0) {
         terminationRequired = true;
@@ -602,3 +607,4 @@ int main(int argc, char *argv[])
     Log_Debug("Application exiting.\n");
     return 0;
 }
+

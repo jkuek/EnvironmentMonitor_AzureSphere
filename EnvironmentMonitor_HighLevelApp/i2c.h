@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include "epoll_timerfd_utilities.h"
+#include "sensors.h"
 
 //// OLED
 #include "oled.h"
@@ -11,6 +12,14 @@
 
 int initI2c(void);
 void closeI2c(void);
+
+//bool GetNewAccelerometerData(struct AccelerometerData* ad);
+bool GetNewGyroscopeData(struct GyroscopeData* ad);
+
+void AccelTimerEventHandler(EventData* eventData);
+
+bool GetNewTemperatureData(float* temperature);
+bool GetLps22hhData(struct Lps22hhData* s);
 
 // Export to use I2C in other file
 extern int i2cFd;
