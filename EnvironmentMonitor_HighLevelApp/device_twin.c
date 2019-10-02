@@ -55,7 +55,6 @@ static const char cstrDeviceTwinJsonString[] = "{\"%s\": \"%s\"}";
 static const char cstrDeviceTwinJsonFloatIOTC[] = "{\"%s\": {\"value\": %.2f, \"status\" : \"completed\" , \"desiredVersion\" : %d }}";
 static const char cstrDeviceTwinJsonBoolIOTC[] = "{\"%s\": {\"value\": %s, \"status\" : \"completed\" , \"desiredVersion\" : %d }}";
 static const char cstrDeviceTwinJsonIntegerIOTC[] = "{\"%s\": {\"value\": %d, \"status\" : \"completed\" , \"desiredVersion\" : %d }}";
-//static const char cstrDeviceTwinJsonStringIOTC[]  = "{\"%s\": {\"value\": %s, \"status\" : \"completed\" , \"desiredVersion\" : %d }}";
 static const char cstrDeviceTwinJsonStringIOTC[]  = "{\"%s\": {\"value\": \"%s\", \"status\" : \"completed\" , \"desiredVersion\" : %d }}";
 #endif 
 
@@ -74,12 +73,12 @@ twin_t twinArray[] = {
 	{.twinKey = "userLedBlue",.twinVar = &userLedBlueIsOn,.twinFd = &userLedBlueFd,.twinGPIO = AVNET_MT3620_SK_USER_LED_BLUE,.twinType = TYPE_BOOL,.active_high = false},
 	{.twinKey = "appLed",.twinVar = &appLedIsOn,.twinFd = &appLedFd,.twinGPIO = AVNET_MT3620_SK_APP_STATUS_LED_YELLOW,.twinType = TYPE_BOOL,.active_high = false},
 	{.twinKey = "wifiLed",.twinVar = &wifiLedIsOn,.twinFd = &wifiLedFd,.twinGPIO = AVNET_MT3620_SK_WLAN_STATUS_LED_YELLOW,.twinType = TYPE_BOOL,.active_high = false},
-	{.twinKey = "clickBoardRelay1",.twinVar = &clkBoardRelay1IsOn,.twinFd = &clickSocket1Relay1Fd,.twinGPIO = AVNET_MT3620_SK_GPIO34,.twinType = TYPE_BOOL,.active_high = true},
-	{.twinKey = "clickBoardRelay2",.twinVar = &clkBoardRelay2IsOn,.twinFd = &clickSocket1Relay2Fd,.twinGPIO = AVNET_MT3620_SK_GPIO0,.twinType = TYPE_BOOL,.active_high = true},
-	{.twinKey = "OledDisplayMsg1",.twinVar = oled_ms1,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	{.twinKey = "OledDisplayMsg2",.twinVar = oled_ms2,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	{.twinKey = "OledDisplayMsg3",.twinVar = oled_ms3,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	{.twinKey = "OledDisplayMsg4",.twinVar = oled_ms4,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true}
+	//{.twinKey = "clickBoardRelay1",.twinVar = &clkBoardRelay1IsOn,.twinFd = &clickSocket1Relay1Fd,.twinGPIO = AVNET_MT3620_SK_GPIO34,.twinType = TYPE_BOOL,.active_high = true},
+	//{.twinKey = "clickBoardRelay2",.twinVar = &clkBoardRelay2IsOn,.twinFd = &clickSocket1Relay2Fd,.twinGPIO = AVNET_MT3620_SK_GPIO0,.twinType = TYPE_BOOL,.active_high = true},
+	//{.twinKey = "OledDisplayMsg1",.twinVar = oled_ms1,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
+	//{.twinKey = "OledDisplayMsg2",.twinVar = oled_ms2,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
+	//{.twinKey = "OledDisplayMsg3",.twinVar = oled_ms3,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
+	//{.twinKey = "OledDisplayMsg4",.twinVar = oled_ms4,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true}
 };
 
 // Calculate how many twin_t items are in the array.  We use this to iterate through the structure.

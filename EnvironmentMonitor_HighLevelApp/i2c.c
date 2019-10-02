@@ -55,7 +55,7 @@
 
 
 void InitBME680(void);
-void ReadBME680(void);
+
 
 /* Private variables ---------------------------------------------------------*/
 static axis3bit16_t data_raw_acceleration;
@@ -66,24 +66,13 @@ static axis1bit16_t data_raw_temperature;
 
 
 static uint8_t whoamI, rst;
-static int accelTimerFd = -1;
 const uint8_t lsm6dsOAddress = LSM6DSO_ADDRESS;     // Addr = 0x6A
 lsm6dso_ctx_t dev_ctx;
 lps22hh_ctx_t pressure_ctx;
 
-float altitude;
 
-struct
-{
-	struct AccelerometerData accelerometer;
-	struct GyroscopeData gyroscope;
-	float temperature;
-} lsm6dso_sensors;
-
-
-struct Lps22hhData lps22hh_sensors;
-
-struct bme680_dev gas_sensor;
+//used by BME680 driver
+static struct bme680_dev gas_sensor;
 
 // Status variables
 uint8_t lsm6dso_status = 1;
@@ -161,114 +150,6 @@ bool GetNewGyroscopeData(struct GyroscopeData* gd)
 	return true;
 }
 
-
-
-/// <summary>
-///     Print latest data from on-board sensors.
-/// </summary>
-void AccelTimerEventHandler(EventData *eventData)
-{
-
-#if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
-	static bool firstPass = true;
-#endif
-	// Consume the event.  If we don't do this we'll come right back 
-	// to process the same event again
-	if (ConsumeTimerFdEvent(accelTimerFd) != 0) {
-		terminationRequired = true;
-		return;
-	}
-
-	/* check each of the sensors in turn 
-		for each sensor that has new data available, add the key/value to the json object
-		finally, send the new data up to the cloud	
-	*/
-
-
-
-	//Read the LSM6DSO sensors
-	if (GetNewAccelerometerData(&lsm6dso_sensors.accelerometer))
-	{
-		Log_Debug("\nLSM6DSO: Acceleration [mg]  : %.4lf, %.4lf, %.4lf\n", 
-			lsm6dso_sensors.accelerometer.x, lsm6dso_sensors.accelerometer.y, lsm6dso_sensors.accelerometer.z);
-	}
-	
-	if (GetNewGyroscopeData(&lsm6dso_sensors.gyroscope))
-	{
-		Log_Debug("LSM6DSO: Angular rate [dps] : %4.2f, %4.2f, %4.2f\n",
-			lsm6dso_sensors.gyroscope.x, lsm6dso_sensors.gyroscope.y, lsm6dso_sensors.gyroscope.z);
-	}
-
-	if (GetNewTemperatureData(&lsm6dso_sensors.temperature))
-	{
-		Log_Debug("LSM6DSO: Temperature1 [degC]: %.2f\n", lsm6dso_sensors.temperature);
-	}
-	 
-	// Read the LPS22HH sensors
-	if (GetLps22hhData(&lps22hh_sensors))
-	{
-		Log_Debug("LPS22HH: Pressure     [hPa] : %.2f\n", lps22hh_sensors.pressure_hPa);
-		Log_Debug("LPS22HH: Temperature2 [degC]: %.2f\n", lps22hh_sensors.temperature_degC);
-	}
-
-
-	sensor_data.acceleration_mg[0] = lsm6dso_sensors.accelerometer.x;
-	sensor_data.acceleration_mg[1] = lsm6dso_sensors.accelerometer.y;
-	sensor_data.acceleration_mg[2] = lsm6dso_sensors.accelerometer.z;
-	sensor_data.angular_rate_dps[0] = lsm6dso_sensors.gyroscope.x;
-	sensor_data.angular_rate_dps[1] = lsm6dso_sensors.gyroscope.y;
-	sensor_data.angular_rate_dps[2] = lsm6dso_sensors.gyroscope.z;
-	sensor_data.lsm6dsoTemperature_degC = lsm6dso_sensors.temperature;
-	sensor_data.lps22hhpressure_hPa = lps22hh_sensors.pressure_hPa;
-	sensor_data.lps22hhTemperature_degC = lps22hh_sensors.temperature_degC;
-
-	/*
-	The ALTITUDE value calculated is actually "Pressure Altitude". This lacks correction for temperature (and humidity)
-	"pressure altitude" calculator located at: https://www.weather.gov/epz/wxcalc_pressurealtitude
-	"pressure altitude" formula is defined at: https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf
-	 altitude in feet = 145366.45 * (1 - (hPa / 1013.25) ^ 0.190284) feet
-	 altitude in meters = 145366.45 * 0.3048 * (1 - (hPa / 1013.25) ^ 0.190284) meters
-	*/
-	// weather.com formula
-	//altitude = 44307.69396 * (1 - powf((atm / 1013.25), 0.190284));  // pressure altitude in meters
-	// Bosch's formula
-	altitude = 44330 * (1 - powf((lps22hh_sensors.pressure_hPa / 1013.25), 1 / 5.255));  // pressure altitude in meters
-
-
-	Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\r\n", light_sensor);
-
-	//// OLED
-	update_oled();
-
-#if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
-
-	// We've seen that the first read of the Accelerometer data is garbage.  If this is the first pass
-	// reading data, don't report it to Azure.  Since we're graphing data in Azure, this data point
-	// will skew the data.
-	if (!firstPass) {
-
-		//// Allocate memory for a telemetry message to Azure
-		//char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
-		//if (pjsonBuffer == NULL) {
-		//	Log_Debug("ERROR: not enough memory to send telemetry");
-		//}
-		//
-		//snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
-		//	angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
-
-		//Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
-		//
-		//AzureIoT_SendMessage(pjsonBuffer);
-		//free(pjsonBuffer);
-	
-	}
-
-	firstPass = false;
-
-#endif 
-
-	ReadBME680();
-}
 
 bool GetNewTemperatureData(float * temperature)
 {
@@ -467,7 +348,6 @@ int initI2c(void) {
 	Log_Debug("LSM6DSO: Please make sure the device is stationary.\n");
 
 	do {
-
 		// Read the calibration values
 		lsm6dso_gy_flag_data_ready_get(&dev_ctx, &reg);
 		if (reg)
@@ -497,16 +377,10 @@ int initI2c(void) {
 
 	Log_Debug("LSM6DSO: Angular rate calibration complete!\n");
 
-	// Init the epoll interface to periodically run the AccelTimerEventHandler routine where we read the sensors
 
-	// Define the period in the build_options.h file
-	struct timespec accelReadPeriod = { .tv_sec = ACCEL_READ_PERIOD_SECONDS,.tv_nsec = ACCEL_READ_PERIOD_NANO_SECONDS };
-	// event handler data structures. Only the event handler field needs to be populated.
-	static EventData accelEventData = { .eventHandler = &AccelTimerEventHandler };
-	accelTimerFd = CreateTimerFdAndAddToEpoll(epollFd, &accelReadPeriod, &accelEventData, EPOLLIN);
-	if (accelTimerFd < 0) {
-		return -1;
-	}
+	//First read of the accelerometer data is bad, so let's read and burn it here
+	struct AccelerometerData ad;
+	GetNewAccelerometerData(&ad);
 
 	InitBME680();	
 
@@ -519,7 +393,6 @@ int initI2c(void) {
 void closeI2c(void) {
 
 	CloseFdAndPrintError(i2cFd, "i2c");
-	CloseFdAndPrintError(accelTimerFd, "accelTimer");
 }
 
 /// <summary>
@@ -926,7 +799,7 @@ void InitBME680(void)
 }
 
 
-void ReadBME680(void)
+bool ReadBME680(struct Bme680Data* bd)
 {
 	int8_t rslt = BME680_OK;
 	/* Get the total measurement duration so as to sleep or wait till the measurement is complete */
@@ -935,37 +808,32 @@ void ReadBME680(void)
 
 	struct bme680_field_data data;
 
-	//while (1)
+	user_delay_ms(meas_period); /* Delay till the measurement is ready */
+
+	rslt = bme680_get_sensor_data(&data, &gas_sensor);
+
+	if (rslt != BME680_OK)
 	{
-		user_delay_ms(meas_period); /* Delay till the measurement is ready */
-
-		rslt = bme680_get_sensor_data(&data, &gas_sensor);
-
-		Log_Debug("T: %.2f degC, P: %.2f hPa, H %.2f %%rH ", data.temperature / 100.0f,
-			data.pressure / 100.0f, data.humidity / 1000.0f);
-
-		/* Avoid using measurements from an unstable heating setup */
-		if (data.status & BME680_GASM_VALID_MSK)
-			Log_Debug(", G: %d ohms", data.gas_resistance);
-
-		Log_Debug("\n");
-
-		struct
-		{
-			float temperature;
-			float humidity;
-			float pressure;
-			float ambient_light;
-		}sensor_values;
-
-		sensor_values.ambient_light = light_sensor;
-		sensor_values.temperature = data.temperature/ 100.0f;
-		sensor_values.humidity = data.humidity / 1000.0f;
-		sensor_values.pressure = data.pressure / 100.0f;
-
-		/* Trigger the next measurement if you would like to read data out continuously */
-		if (gas_sensor.power_mode == BME680_FORCED_MODE) {
-			rslt = bme680_set_sensor_mode(&gas_sensor);
-		}
+		return false;
 	}
+
+	bd->temperature = data.temperature / 100.0f;
+	bd->humidity = data.humidity / 1000.0f;
+	bd->pressure = data.pressure / 100.0f;
+
+	Log_Debug("T: %.2f degC, P: %.2f hPa, H %.2f %%rH ", data.temperature / 100.0f,
+		data.pressure / 100.0f, data.humidity / 1000.0f);
+
+	/* Avoid using measurements from an unstable heating setup */
+	if (data.status & BME680_GASM_VALID_MSK)
+		Log_Debug(", G: %d ohms", data.gas_resistance);
+
+	Log_Debug("\n");
+
+	/* Trigger the next measurement if you would like to read data out continuously */
+	if (gas_sensor.power_mode == BME680_FORCED_MODE) {
+		rslt = bme680_set_sensor_mode(&gas_sensor);
+	}
+
+	return (rslt == BME680_OK);
 }

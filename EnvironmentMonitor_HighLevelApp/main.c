@@ -116,7 +116,10 @@ static EventData timerEventData = { .eventHandler = &TimerEventHandler };
 static EventData socketEventData = { .eventHandler = &SocketEventHandler };
 //// end ADC connection
 
-// Button state variables, initilize them to button not-pressed (High)
+
+static int readSensorTimerFd = -1;
+
+// Button state variables, initialize them to button not-pressed (High)
 static GPIO_Value_Type buttonAState = GPIO_Value_High;
 static GPIO_Value_Type buttonBState = GPIO_Value_High;
 
@@ -129,6 +132,13 @@ static const char cstrButtonTelemetryJson[] = "{\"%s\":\"%d\"}";
 
 // Termination state
 volatile sig_atomic_t terminationRequired = false;
+
+
+float altitude;
+struct Lsm6dsoData lsm6dso_sensors;
+struct Lps22hhData lps22hh_sensors;
+struct Bme680Data bme680_sensors;
+
 
 /// <summary>
 ///     Signal handler for termination requests. This handler must be async-signal-safe.
@@ -359,6 +369,141 @@ static void SendMessageToRTCore(void)
 
 //// end ADC connection
 
+
+
+
+
+/// <summary>
+///     Update sensor data
+/// </summary>
+void ReadSensorTimerEventHandler(EventData* eventData)
+{
+	// Consume the event to stop it from recurring immediately
+
+	if (ConsumeTimerFdEvent(readSensorTimerFd) != 0) {
+		terminationRequired = true;
+		return;
+	}
+
+	/* check each of the sensors in turn
+		for each sensor that has new data available, add the key/value to the json object
+		finally, send the new data up to the cloud
+	*/
+
+	JSON_Value* root_value = json_value_init_object();
+	JSON_Object* root_object = json_value_get_object(root_value);
+	char* serialized_string = NULL;
+
+	//Read the LSM6DSO sensors
+	if (GetNewAccelerometerData(&lsm6dso_sensors.accelerometer))
+	{
+		Log_Debug("\nLSM6DSO: Acceleration [mg]  : %.4lf, %.4lf, %.4lf\n",
+			lsm6dso_sensors.accelerometer.x, lsm6dso_sensors.accelerometer.y, lsm6dso_sensors.accelerometer.z);
+
+		json_object_set_number(root_object, "aX", lsm6dso_sensors.accelerometer.x);
+		json_object_set_number(root_object, "aY", lsm6dso_sensors.accelerometer.y);
+		json_object_set_number(root_object, "aZ", lsm6dso_sensors.accelerometer.z);
+	}
+
+	if (GetNewGyroscopeData(&lsm6dso_sensors.gyroscope))
+	{
+		Log_Debug("LSM6DSO: Angular rate [dps] : %4.2f, %4.2f, %4.2f\n",
+			lsm6dso_sensors.gyroscope.x, lsm6dso_sensors.gyroscope.y, lsm6dso_sensors.gyroscope.z);
+
+		json_object_set_number(root_object, "gX", lsm6dso_sensors.gyroscope.x);
+		json_object_set_number(root_object, "gY", lsm6dso_sensors.gyroscope.y);
+		json_object_set_number(root_object, "gZ", lsm6dso_sensors.gyroscope.z);
+	}
+
+	if (GetNewTemperatureData(&lsm6dso_sensors.temperature))
+	{
+		Log_Debug("LSM6DSO: Temperature1 [degC]: %.2f\n", lsm6dso_sensors.temperature);
+		//This values is unused, instead use temperature from the BME680
+	}
+
+	// Read the LPS22HH sensors
+	if (GetLps22hhData(&lps22hh_sensors))
+	{
+		Log_Debug("LPS22HH: Pressure     [hPa] : %.2f\n", lps22hh_sensors.pressure_hPa);
+		Log_Debug("LPS22HH: Temperature2 [degC]: %.2f\n", lps22hh_sensors.temperature_degC);
+		//These values are unused, instead use temperature and pressure from the BME680
+	}
+
+	sensor_data.acceleration_mg[0] = lsm6dso_sensors.accelerometer.x;
+	sensor_data.acceleration_mg[1] = lsm6dso_sensors.accelerometer.y;
+	sensor_data.acceleration_mg[2] = lsm6dso_sensors.accelerometer.z;
+	sensor_data.angular_rate_dps[0] = lsm6dso_sensors.gyroscope.x;
+	sensor_data.angular_rate_dps[1] = lsm6dso_sensors.gyroscope.y;
+	sensor_data.angular_rate_dps[2] = lsm6dso_sensors.gyroscope.z;
+	sensor_data.lsm6dsoTemperature_degC = lsm6dso_sensors.temperature;
+	sensor_data.lps22hhpressure_hPa = lps22hh_sensors.pressure_hPa;
+	sensor_data.lps22hhTemperature_degC = lps22hh_sensors.temperature_degC;
+
+	/*
+	The ALTITUDE value calculated is actually "Pressure Altitude". This lacks correction for temperature (and humidity)
+	"pressure altitude" calculator located at: https://www.weather.gov/epz/wxcalc_pressurealtitude
+	"pressure altitude" formula is defined at: https://www.weather.gov/media/epz/wxcalc/pressureAltitude.pdf
+	 altitude in feet = 145366.45 * (1 - (hPa / 1013.25) ^ 0.190284) feet
+	 altitude in meters = 145366.45 * 0.3048 * (1 - (hPa / 1013.25) ^ 0.190284) meters
+	*/
+	// weather.com formula
+	//altitude = 44307.69396 * (1 - powf((atm / 1013.25), 0.190284));  // pressure altitude in meters
+	// Bosch's formula
+	altitude = 44330 * (1 - powf((lps22hh_sensors.pressure_hPa / 1013.25), 1 / 5.255));  // pressure altitude in meters
+
+	if (RTCore_status == 0)
+	{
+		//intercore comms is good, so these values should be good
+		json_object_set_number(root_object, "ambient_light", light_sensor);
+		Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\n", light_sensor);
+	}
+
+	//// OLED
+	update_oled();
+
+	if (ReadBME680(&bme680_sensors))
+	{
+		json_object_set_number(root_object, "temperature", bme680_sensors.temperature);
+		json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
+		json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
+		//TODO: json_object_set_number(root_object, "iaq", 2);
+	}
+
+#if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
+	{
+
+		//// Allocate memory for a telemetry message to Azure
+		//char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
+		//if (pjsonBuffer == NULL) {
+		//	Log_Debug("ERROR: not enough memory to send telemetry");
+		//}
+		//
+		//snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
+		//	angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
+
+		//Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
+		//
+		//AzureIoT_SendMessage(pjsonBuffer);
+		//free(pjsonBuffer);
+
+		//create json string from object
+		serialized_string = json_serialize_to_string(root_value);
+
+		Log_Debug("Sending JSON string: %s", serialized_string);
+
+		AzureIoT_SendMessage(serialized_string);
+	}
+
+#endif 
+
+	//clean up
+	json_free_serialized_string(serialized_string);
+	json_value_free(root_value);
+
+}
+
+
+
 /// <summary>
 ///     Set up SIGTERM termination handler, initialize peripherals, and set up event handlers.
 /// </summary>
@@ -423,7 +568,19 @@ static int InitPeripheralsAndHandlers(void)
 	if (initI2c() == -1) {
 		return -1;
 	}
-	
+
+	//set up a periodic timer to read the sensors
+
+	// Define the period in the build_options.h file
+	struct timespec accelReadPeriod = { .tv_sec = ACCEL_READ_PERIOD_SECONDS,.tv_nsec = ACCEL_READ_PERIOD_NANO_SECONDS };
+	// event handler data structures. Only the event handler field needs to be populated.
+	static EventData readSensorEventData = { .eventHandler = &ReadSensorTimerEventHandler };
+	readSensorTimerFd = CreateTimerFdAndAddToEpoll(epollFd, &accelReadPeriod, &readSensorEventData, EPOLLIN);
+	if (readSensorTimerFd < 0) {
+		return -1;
+	}
+
+
 	// Traverse the twin Array and for each GPIO item in the list open the file descriptor
 	for (int i = 0; i < twinArraySize; i++) {
 
@@ -460,8 +617,7 @@ static int InitPeripheralsAndHandlers(void)
 	// Set up a timer to poll the buttons
 	
 	struct timespec buttonPressCheckPeriod = { 0, 1000000 };
-	buttonPollTimerFd =
-		CreateTimerFdAndAddToEpoll(epollFd, &buttonPressCheckPeriod, &buttonEventData, EPOLLIN);
+	buttonPollTimerFd = CreateTimerFdAndAddToEpoll(epollFd, &buttonPressCheckPeriod, &buttonEventData, EPOLLIN);
 	if (buttonPollTimerFd < 0) {
 		return -1;
 	}
@@ -480,6 +636,7 @@ static void ClosePeripheralsAndHandlers(void)
     Log_Debug("Closing file descriptors.\n");
     
 	closeI2c();
+	CloseFdAndPrintError(readSensorTimerFd, "readSensorTimer");
     CloseFdAndPrintError(epollFd, "Epoll");
 	CloseFdAndPrintError(buttonPollTimerFd, "buttonPoll");
 	CloseFdAndPrintError(buttonAGpioFd, "buttonA");
@@ -567,10 +724,10 @@ int main(int argc, char *argv[])
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 				// Note that we send up this data to Azure if it changes, but the IoT Central Properties elements only 
-				// show the data that was currenet when the device first connected to Azure.
-				checkAndUpdateDeviceTwin("ssid", &ssid, TYPE_STRING, false);
-				checkAndUpdateDeviceTwin("freq", &frequency, TYPE_INT, false);
-				checkAndUpdateDeviceTwin("bssid", &bssid, TYPE_STRING, false);
+				// show the data that was current when the device first connected to Azure.
+				checkAndUpdateDeviceTwin("wifi_ssid", &ssid, TYPE_STRING, false);
+				checkAndUpdateDeviceTwin("wifi_frequency", &frequency, TYPE_INT, false);
+				checkAndUpdateDeviceTwin("wifi_bssid", &bssid, TYPE_STRING, false);
 #endif 
 			}
 
