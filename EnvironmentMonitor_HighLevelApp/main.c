@@ -371,6 +371,31 @@ static void SendMessageToRTCore(void)
 
 
 
+float CalculateDewPoint(float temperature, float relative_humidity)
+{
+	/*  Dew point calculation [Ref: https://www.omnicalculator.com/physics/dew-point#howto]
+
+	The dew point is calculated according to the following formula:
+
+		Ts = (b * α(T,RH)) / (a - α(T,RH))
+		s
+	where:
+
+		Ts is the dew point;
+		T is the temperature;
+		RH is the relative humidity of the air;
+		a and b are coefficients. For Sonntag90 constant set, a=17.62 and b=243.12°C;
+		α(T,RH) = ln(RH/100) +a*T/(b+T).
+	*/
+	const float a = 17.62;
+	const float b = 243.12;
+
+	float alpha = log(relative_humidity / 100.0f) + (a * temperature) / (b + temperature);
+
+	float dew_point = (b * alpha) / (a - alpha);
+
+	return dew_point;
+}
 
 
 /// <summary>
@@ -467,6 +492,10 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 		json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
 		json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
 		//TODO: json_object_set_number(root_object, "iaq", 2);
+
+		float dew_point = CalculateDewPoint(bme680_sensors.temperature, bme680_sensors.humidity);
+
+		json_object_set_number(root_object, "dew_point", dew_point);
 	}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
