@@ -25,7 +25,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'" Label="Configuration">
     <UseDebugLibraries>true</UseDebugLibraries>
-    <TargetSysroot>2+Beta1905</TargetSysroot>
+    <TargetSysroot>3+Beta1909</TargetSysroot>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'" Label="Configuration">
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -40,7 +40,9 @@
     <PartnerComponents>005180BC-402F-4CB3-A662-72937DBCDE47</PartnerComponents>
     <TargetHardwareDirectory>..\Hardware\avnet_mt3620_sk</TargetHardwareDirectory>
     <TargetHardwareDefinition>sample_hardware.json</TargetHardwareDefinition>
-    <IncludePath>libraries;drivers\BME680;$(SysRootIncludePath);$(IncludePath)</IncludePath>
+    <IncludePath>drivers/BME680;libraries;drivers;$(SysRootIncludePath);$(IncludePath)</IncludePath>
+    <LibraryPath>
+    </LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM'">
     <PartnerComponents>005180BC-402F-4CB3-A662-72937DBCDE47</PartnerComponents>
@@ -49,10 +51,12 @@
   </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="azure_iot_utilities.c" />
+    <ClCompile Include="bme680_integration.c" />
     <ClCompile Include="device_twin.c" />
     <ClCompile Include="drivers\BME680\bme680.c" />
     <ClCompile Include="drivers\BME680\Self test\bme680_selftest.c" />
     <ClCompile Include="i2c.c" />
+    <ClCompile Include="libraries\BSEC\bsec_serialized_configurations_iaq.c" />
     <ClCompile Include="lps22hh_reg.c" />
     <ClCompile Include="lsm6dso_reg.c" />
     <ClCompile Include="main.c" />
@@ -69,6 +73,9 @@
     <ClInclude Include="connection_strings.h" />
     <ClInclude Include="deviceTwin.h" />
     <ClInclude Include="epoll_timerfd_utilities.h" />
+    <ClInclude Include="libraries\BSEC\bsec_datatypes.h" />
+    <ClInclude Include="libraries\BSEC\bsec_interface.h" />
+    <ClInclude Include="libraries\BSEC\bsec_serialized_configurations_iaq.h" />
     <ClInclude Include="sensors.h" />
     <ClInclude Include="oled.h" />
     <ClInclude Include="parson.h" />
@@ -79,6 +86,12 @@
     <ClInclude Include="lsm6dso_reg.h" />
     <ClInclude Include="applibs_versions.h" />
   </ItemGroup>
+  <ItemGroup>
+    <Library Include="libraries\BSEC\libalgobsec.a" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="readme.md" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
   <ItemDefinitionGroup>
@@ -86,8 +99,9 @@
       <AdditionalOptions>-Werror=implicit-function-declaration %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <LibraryDependencies>applibs;pthread;gcc_s;c;azureiot</LibraryDependencies>
+      <LibraryDependencies>applibs;pthread;gcc_s;c;azureiot;algobsec</LibraryDependencies>
       <AdditionalOptions>-Wl,--no-undefined -nodefaultlibs %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalLibraryDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|ARM'">libraries\BSEC;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
 </Project>

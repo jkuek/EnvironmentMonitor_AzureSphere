@@ -28,6 +28,12 @@
     <Filter Include="Source Files\libraries">
       <UniqueIdentifier>{259684a4-bc74-47d5-880e-1340bd8617a9}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\libraries\bsec">
+      <UniqueIdentifier>{f5c68726-5d4f-43e7-81ea-d39ac9263d16}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\libraries\parson">
+      <UniqueIdentifier>{4260220e-5645-4593-8faa-e6139961b6bf}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.c">
@@ -49,9 +55,6 @@
     <ClCompile Include="i2c.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="parson.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="oled.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -69,6 +72,15 @@
     </ClCompile>
     <ClCompile Include="lps22hh_reg.c">
       <Filter>Source Files\drivers\LPS22HH</Filter>
+    </ClCompile>
+    <ClCompile Include="parson.c">
+      <Filter>Source Files\libraries\parson</Filter>
+    </ClCompile>
+    <ClCompile Include="bme680_integration.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="libraries\BSEC\bsec_serialized_configurations_iaq.c">
+      <Filter>Source Files\libraries\bsec</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -120,5 +132,24 @@
     <ClInclude Include="sensors.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="libraries\BSEC\bsec_datatypes.h">
+      <Filter>Source Files\libraries\bsec</Filter>
+    </ClInclude>
+    <ClInclude Include="libraries\BSEC\bsec_interface.h">
+      <Filter>Source Files\libraries\bsec</Filter>
+    </ClInclude>
+    <ClInclude Include="libraries\BSEC\bsec_serialized_configurations_iaq.h">
+      <Filter>Source Files\libraries\bsec</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="libraries\BSEC\libalgobsec.a">
+      <Filter>Source Files\libraries\bsec</Filter>
+    </Library>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="readme.md">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
