@@ -6,11 +6,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
+#include <string.h>
 
 #include "mt3620-baremetal.h"
 #include "mt3620-intercore.h"
+#include "mt3620-timer-poll.h"
 #include "mt3620-uart-poll.h"
 #include "mt3620-adc.h"
+
+#define MAX_AMBIENT_BUFFER_SIZE (2000)
 
 extern uint32_t StackTop; // &StackTop == end of TCM0
 
@@ -54,6 +58,44 @@ static _Noreturn void DefaultExceptionHandler(void)
     }
 }
 
+
+static uint32_t GetAmbientNoiseLevel(void)
+{
+	const uint32_t duration = 100000; //100000 us = 100 ms
+	uint32_t count = 0;
+	int32_t buffer[MAX_AMBIENT_BUFFER_SIZE];
+	uint32_t start = Gpt3_CurrentTime();
+
+	/* I am feeding a 0-2.2 V signal into the ADC, where 2.5V is full-scale (= 4095 at 12-bits)
+		Calculate the DC offset to subtract
+	*/
+	const uint32_t analog_offset = (1.1 / 2.5) * 4096; 
+
+	while (((Gpt3_CurrentTime() - start) < duration) && (count < MAX_AMBIENT_BUFFER_SIZE))
+	{
+		//Mic Click board is in socket #1 --> use analog channel 1
+		buffer[count] = ReadAdc(1);
+		count++;
+	};
+
+	uint32_t total = 0;
+	//now process the samples
+	for (int i = 0; i < count; i++)
+	{
+		//subtract DC offset (1.1 V)
+		buffer[i] -= analog_offset;
+
+		//sum of squares
+		total += buffer[i] * buffer[i];
+	}
+
+	//calculate the average
+	uint32_t average = total / count;
+
+	return average;
+}
+
+
 static void PrintBytes(const uint8_t *buf, int start, int end)
 {
     int step = (end >= start) ? +1 : -1;
@@ -79,14 +121,16 @@ static void PrintGuid(const uint8_t *guid)
 
 static _Noreturn void RTCoreMain(void)
 {
-	union Analog_data
+	struct Payload
 	{
-		uint32_t u32;
-		uint8_t u8[4];
-	} analog_data;
+		uint32_t ambient_light;
+		uint32_t ambient_noise;
+	} payload;
 
     // SCB->VTOR = ExceptionVectorTable
     WriteReg32(SCB_BASE, 0x08, (uint32_t)ExceptionVectorTable);
+
+	Gpt3_Init();
 
     Uart_Init();
     Uart_WriteStringPoll("--------------------------------\r\n");
@@ -109,9 +153,10 @@ static _Noreturn void RTCoreMain(void)
     for (;;)
 	{
         uint8_t buf[256];
-        uint32_t dataSize = sizeof(buf);
-		uint8_t j = 0;
-		uint32_t mV;
+        uint32_t dataSize = sizeof(buf);		
+
+		// update ambient noise sample, this will block for ~105 ms
+		uint32_t ambient_noise = GetAmbientNoiseLevel();
 
         // On success, dataSize is set to the actual number of bytes which were read.
         int r = DequeueData(outbound, inbound, sharedBufSize, buf, &dataSize);
@@ -121,7 +166,7 @@ static _Noreturn void RTCoreMain(void)
             continue;
         }
 
-		// For debug prrposes 
+		// For debug purposes 
         Uart_WriteStringPoll("Received message of ");
         Uart_WriteIntegerPoll(dataSize);
         Uart_WriteStringPoll("bytes:\r\n");
@@ -164,25 +209,21 @@ static _Noreturn void RTCoreMain(void)
         }
         Uart_WriteStringPoll("\r\n");
 
-		// Read ADC channel 0
-		analog_data.u32 = ReadAdc(0);
+		// Read ADC channel 0 (ambient light)
+		payload.ambient_light = ReadAdc(0);
+		payload.ambient_noise = ambient_noise;
 		
-		mV = (analog_data.u32 * 2500) / 0xFFF;
+		uint32_t mV = (payload.ambient_light * 2500) / 0xFFF;
 		Uart_WriteStringPoll("ADC channel 0: ");
 		Uart_WriteIntegerPoll(mV / 1000);
 		Uart_WriteStringPoll(".");
 		Uart_WriteIntegerWidthPoll(mV % 1000, 3);
 		Uart_WriteStringPoll(" V");
 		Uart_WriteStringPoll("\r\n");
-
-		j = 0;
-		for (int i = payloadStart; i < payloadStart + 4; i++)
-		{
-			// Put ADC data to buffer
-			buf[i] = analog_data.u8[j++];
-		}
+		
+		memcpy(&buf[payloadStart], (uint8_t*)&payload, sizeof(payload));
 
 		// Send buffer to A7 Core
-        EnqueueData(inbound, outbound, sharedBufSize, buf, payloadStart + 4);
+        EnqueueData(inbound, outbound, sharedBufSize, buf, payloadStart + sizeof(payload));
     }
 }
