@@ -123,6 +123,8 @@ static int readSensorTimerFd = -1;
 static GPIO_Value_Type buttonAState = GPIO_Value_High;
 static GPIO_Value_Type buttonBState = GPIO_Value_High;
 
+static uint32_t ambient_noise;
+
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 	bool versionStringSent = false;
 #endif
@@ -149,7 +151,6 @@ static void TerminationHandler(int signalNumber)
     terminationRequired = true;
 }
 
-
 void SendTelemetryDataToAzure(void) {
 	struct
 	{
@@ -159,9 +160,9 @@ void SendTelemetryDataToAzure(void) {
 		double iaq;
 		double ambient_light;
 	} telemetryData
-		= { 1,2,3,4,5};
+		= { 1,2,3,4,5 };
 
-	
+
 	JSON_Value* root_value = json_value_init_object();
 	JSON_Object* root_object = json_value_get_object(root_value);
 	char* serialized_string = NULL;
@@ -301,6 +302,12 @@ static void SocketEventHandler(EventData *eventData)
 {
 	// Read response from real-time capable application.
 	char rxBuf[32];
+	struct Payload
+	{
+		uint32_t ambient_light;
+		uint32_t ambient_noise;
+	} * payload;
+
 	union Analog_data
 	{
 		uint32_t u32;
@@ -312,6 +319,15 @@ static void SocketEventHandler(EventData *eventData)
 	if (bytesReceived == -1) {
 		Log_Debug("ERROR: Unable to receive message: %d (%s)\n", errno, strerror(errno));
 		terminationRequired = true;
+	}
+
+	if (bytesReceived >= sizeof(struct Payload))
+	{
+		payload = (struct Payload *)rxBuf;
+		light_sensor = ((float)payload->ambient_light * 2.5 / 4095) * 1000000 / (3650 * 0.1428);
+		ambient_noise = payload->ambient_noise;
+
+		Log_Debug("Audio = %u\n", payload->ambient_noise);
 	}
 
 	// Copy data from Rx buffer to analog_data union
@@ -326,11 +342,9 @@ static void SocketEventHandler(EventData *eventData)
 	// divide by 0.1428 to get Lux (based on fluorescent light Fig. 1 datasheet)
 	// divide by 0.5 to get Lux (based on incandescent light Fig. 1 datasheet)
 	// We can simplify the factors, but for demostration purpose it's OK
-	light_sensor = ((float)analog_data.u32*2.5/4095)*1000000 / (3650*0.1428);
+	//light_sensor = ((float)analog_data.u32*2.5/4095)*1000000 / (3650*0.1428);
 
-	Log_Debug("Received %d bytes. ", bytesReceived);
-
-	Log_Debug("\n");	
+	Log_Debug("Received %d bytes.\n", bytesReceived);
 }
 
 /// <summary>
@@ -480,7 +494,10 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 	{
 		//intercore comms is good, so these values should be good
 		json_object_set_number(root_object, "ambient_light", light_sensor);
+		json_object_set_number(root_object, "ambient_noise", ambient_noise);
+
 		Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\n", light_sensor);
+
 	}
 
 	//// OLED
@@ -601,7 +618,7 @@ static int InitPeripheralsAndHandlers(void)
 	//set up a periodic timer to read the sensors
 
 	// Define the period in the build_options.h file
-	struct timespec accelReadPeriod = { .tv_sec = ACCEL_READ_PERIOD_SECONDS,.tv_nsec = ACCEL_READ_PERIOD_NANO_SECONDS };
+	struct timespec accelReadPeriod = { .tv_sec = SENSOR_READ_INTERVAL_SECONDS,.tv_nsec = 0 };
 	// event handler data structures. Only the event handler field needs to be populated.
 	static EventData readSensorEventData = { .eventHandler = &ReadSensorTimerEventHandler };
 	readSensorTimerFd = CreateTimerFdAndAddToEpoll(epollFd, &accelReadPeriod, &readSensorEventData, EPOLLIN);
