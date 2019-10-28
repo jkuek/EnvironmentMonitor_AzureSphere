@@ -14,6 +14,7 @@
 #include "mt3620-uart-poll.h"
 #include "mt3620-adc.h"
 
+#include <math.h>
 #define MAX_AMBIENT_BUFFER_SIZE (2000)
 
 extern uint32_t StackTop; // &StackTop == end of TCM0
@@ -69,7 +70,7 @@ static uint32_t GetAmbientNoiseLevel(void)
 	/* I am feeding a 0-2.2 V signal into the ADC, where 2.5V is full-scale (= 4095 at 12-bits)
 		Calculate the DC offset to subtract
 	*/
-	const uint32_t analog_offset = (1.1 / 2.5) * 4096; 
+	const uint32_t analog_offset = 1801; // = (~1.1 / 2.5) * 4096; 
 
 	while (((Gpt3_CurrentTime() - start) < duration) && (count < MAX_AMBIENT_BUFFER_SIZE))
 	{
@@ -82,7 +83,7 @@ static uint32_t GetAmbientNoiseLevel(void)
 	//now process the samples
 	for (int i = 0; i < count; i++)
 	{
-		//subtract DC offset (1.1 V)
+		//subtract midpoint (DC offset)
 		buffer[i] -= analog_offset;
 
 		//sum of squares
@@ -91,6 +92,8 @@ static uint32_t GetAmbientNoiseLevel(void)
 
 	//calculate the average
 	uint32_t average = total / count;
+
+	uint32_t rms = sqrtf(average);
 
 	return average;
 }
