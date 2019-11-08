@@ -6,7 +6,7 @@ PROJECT(IntercoreCommsADC_RTApp_MT3620_BMetal C)
 
 # Create executable
 ADD_EXECUTABLE(${PROJECT_NAME} main.c mt3620-intercore.c mt3620-timer-poll.c mt3620-uart-poll.c mt3620-adc.c)
-TARGET_LINK_LIBRARIES(${PROJECT_NAME})
+TARGET_LINK_LIBRARIES(${PROJECT_NAME} -lm)
 SET_TARGET_PROPERTIES(${PROJECT_NAME} PROPERTIES LINK_DEPENDS ${CMAKE_SOURCE_DIR}/linker.ld)
 
 # Add MakeImage post-build command
