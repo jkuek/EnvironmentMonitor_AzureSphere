@@ -103,7 +103,7 @@ int clickSocket1Relay1Fd = -1;
 int clickSocket1Relay2Fd = -1;
 
 //// ADC connection
-static const char rtAppComponentId[] = "005180bc-402f-4cb3-a662-72937dbcde47";
+static const char rtAppComponentId[] = "54e89e6e-13fb-4dca-a067-279e8f060cf7";
 static int sockFd = -1;
 static void SendMessageToRTCore(void);
 static void TimerEventHandler(EventData *eventData);

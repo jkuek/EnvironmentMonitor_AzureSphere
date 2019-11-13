@@ -151,6 +151,8 @@ static _Noreturn void RTCoreMain(void)
         }
     }
 
+	Gpt3_WaitUs(1000000);
+
     static const size_t payloadStart = 20;
 
     for (;;)
