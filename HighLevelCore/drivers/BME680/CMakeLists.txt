@@ -1,0 +1,1 @@
+add_library(bme680 bme680.c)

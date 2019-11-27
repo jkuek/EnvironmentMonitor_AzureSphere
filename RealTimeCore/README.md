@@ -1,3 +1,3 @@
-# Sample: Inter-core comms ADC - real-time capable app
+This application tends to the analogue sensors, reading values for ambient light and ambient noise.
 
-Please see the [parent project README](../README.md) for more information.
+It also processes the raw BME680 values (which are read in the high level app), sending them to the BSEC library and then dispatching the BSEC outputs to the high level app.

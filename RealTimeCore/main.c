@@ -15,7 +15,63 @@
 #include "mt3620-adc.h"
 
 #include <math.h>
+
+
+#include "bsec_datatypes.h"
+#include "bsec_interface.h"
+#include "bsec_serialized_configurations_iaq.h"
+
 #define MAX_AMBIENT_BUFFER_SIZE (2000)
+
+
+
+struct bme680_raw_data
+{
+	int64_t timestamp_ns;
+	uint32_t new_data; //will be non-zero if following data is new and valid, else 0
+
+#ifndef BME680_FLOAT_POINT_COMPENSATION
+/*! Temperature in degree celsius x100 */
+	int16_t temperature;
+	/*! Pressure in Pascal */
+	uint32_t pressure;
+	/*! Humidity in % relative humidity x1000 */
+	uint32_t humidity;
+	/*! Gas resistance in Ohms */
+	uint32_t gas_resistance;
+#else
+	/*! Temperature in degree celsius */
+	float temperature;
+	/*! Pressure in Pascal */
+	float pressure;
+	/*! Humidity in % relative humidity x1000 */
+	float humidity;
+	/*! Gas resistance in Ohms */
+	float gas_resistance;
+
+#endif
+
+
+};
+
+struct real_time_outputs
+{
+	uint32_t ambient_light;
+	uint32_t ambient_noise;
+
+	bsec_output_t iaq;
+	bsec_output_t temperature;
+	bsec_output_t humidity;
+	bsec_output_t rawTemperature;
+	bsec_output_t rawHumidity;
+	bsec_output_t rawPressure;
+	bsec_output_t rawGas;
+	bsec_output_t co2Equivalent;
+
+	bsec_bme_settings_t sensor_settings;
+} outputPayload;
+
+
 
 extern uint32_t StackTop; // &StackTop == end of TCM0
 
@@ -36,7 +92,8 @@ static _Noreturn void RTCoreMain(void);
 #define INTERRUPT_COUNT 100 // from datasheet
 #define EXCEPTION_COUNT (16 + INTERRUPT_COUNT)
 #define INT_TO_EXC(i_) (16 + (i_))
-static const uintptr_t ExceptionVectorTable[EXCEPTION_COUNT]
+
+const uintptr_t ExceptionVectorTable[EXCEPTION_COUNT] __attribute__((section(".vector_table")))
     __attribute__((section(".vector_table"))) __attribute__((used)) = {
         [0] = (uintptr_t)&StackTop,                // Main Stack Pointer (MSP)
         [1] = (uintptr_t)RTCoreMain,               // Reset
@@ -58,6 +115,85 @@ static _Noreturn void DefaultExceptionHandler(void)
         // empty.
     }
 }
+
+
+//Initialise BSEC library
+bool InitialiseBsecLibrary(void)
+{
+	bsec_library_return_t bsec_result; //used to check return values of BSEC library calls
+	
+	//working buffer needed for BSEC library
+	uint8_t work_buffer[BSEC_MAX_PROPERTY_BLOB_SIZE];
+	uint32_t n_work_buffer = BSEC_MAX_PROPERTY_BLOB_SIZE;
+
+	bsec_result = bsec_init();
+	if (bsec_result != BSEC_OK)
+	{
+		return false;
+	}
+
+	/*
+		Configure the BSEC library
+		The default configuration is "generic_18v_300s_4d"
+		I will use "generic_33v_3s_4d", since we are running from 3.3V and I want data every 3s with a 4-day calibration interval
+	*/
+	bsec_result = bsec_set_configuration(bsec_config_iaq, sizeof(bsec_config_iaq), work_buffer, sizeof(work_buffer));
+	if (bsec_result != BSEC_OK)
+	{
+		return false;
+	}
+
+	// TODO: load saved state
+	/*
+	bsec_result = bsec_set_state(bsec_state, bsec_state_len, work_buffer, sizeof(work_buffer));
+	if (bsec_result != BSEC_OK)
+	{
+		return false;
+	}
+	*/
+
+	{
+		// Set up which processed outputs we want from BSEC
+		bsec_sensor_configuration_t requested_virtual_sensors[8];
+		uint8_t n_requested_virtual_sensors = 8;
+
+		requested_virtual_sensors[0].sensor_id = BSEC_OUTPUT_IAQ;
+		requested_virtual_sensors[0].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[1].sensor_id = BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE;
+		requested_virtual_sensors[1].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[2].sensor_id = BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY;
+		requested_virtual_sensors[2].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[3].sensor_id = BSEC_OUTPUT_RAW_PRESSURE;
+		requested_virtual_sensors[3].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[4].sensor_id = BSEC_OUTPUT_RAW_GAS;
+		requested_virtual_sensors[4].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[5].sensor_id = BSEC_OUTPUT_RAW_TEMPERATURE;
+		requested_virtual_sensors[5].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[6].sensor_id = BSEC_OUTPUT_RAW_HUMIDITY;
+		requested_virtual_sensors[6].sample_rate = BSEC_SAMPLE_RATE_LP;
+		requested_virtual_sensors[7].sensor_id = BSEC_OUTPUT_CO2_EQUIVALENT;
+		requested_virtual_sensors[7].sample_rate = BSEC_SAMPLE_RATE_LP;
+
+		// Allocate a struct for the returned physical sensor settings
+		bsec_sensor_configuration_t required_sensor_settings[BSEC_MAX_PHYSICAL_SENSOR];
+		uint8_t  n_required_sensor_settings = BSEC_MAX_PHYSICAL_SENSOR;
+
+		// Call bsec_update_subscription() to enable/disable the requested virtual sensors
+		bsec_result = bsec_update_subscription(requested_virtual_sensors, n_requested_virtual_sensors, required_sensor_settings, &n_required_sensor_settings);
+
+		/* NOTE: according to the integration guide 4.1.2.10,
+			the returned required_sensor_settings are "purely informational" so no need to use them for anything
+		*/
+
+		if (bsec_result != BSEC_OK)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 
 
 static uint32_t GetAmbientNoiseLevel(void)
@@ -94,6 +230,7 @@ static uint32_t GetAmbientNoiseLevel(void)
 	uint32_t average = total / count;
 
 	uint32_t rms = sqrtf(average);
+	
 
 	return average;
 }
@@ -122,13 +259,114 @@ static void PrintGuid(const uint8_t *guid)
     PrintBytes(guid, 10, 15); // 6 bytes
 }
 
+static void ProcessBsec(struct bme680_raw_data * bme680_data)
+{
+	// Allocate input and output memory
+	bsec_input_t inputs[4]; //up to 4 inputs
+	uint8_t input_count = 0; //also used as index
+
+	bsec_output_t outputs[BSEC_NUMBER_OUTPUTS];
+	uint8_t  output_count = BSEC_NUMBER_OUTPUTS;
+
+	/* find out which fields need to be processed */
+	uint8_t process_data = bme680_data->new_data;
+
+	//if (process_data & BSEC_PROCESS_TEMPERATURE)
+	{
+		inputs[input_count].sensor_id = BSEC_INPUT_TEMPERATURE;
+		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
+#ifdef BME680_FLOAT_POINT_COMPENSATION
+		inputs[input_count].signal = bme680_data->temperature;
+#else
+		inputs[input_count].signal = bme680_data->temperature / 100.0f;
+#endif
+		input_count++;
+	}
+
+	//if (process_data & BSEC_PROCESS_HUMIDITY)
+	{
+		inputs[input_count].sensor_id = BSEC_INPUT_HUMIDITY;
+		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
+#ifdef BME680_FLOAT_POINT_COMPENSATION
+		inputs[input_count].signal = bme680_data->humidity;
+#else
+		inputs[input_count].signal = bme680_data->humidity / 1000.0f;
+#endif
+		input_count++;
+	}
+
+	//if (process_data & BSEC_PROCESS_PRESSURE)
+	{
+		inputs[input_count].sensor_id = BSEC_INPUT_PRESSURE;
+		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
+#ifdef BME680_FLOAT_POINT_COMPENSATION
+		inputs[input_count].signal = bme680_data->pressure;
+#else
+		inputs[input_count].signal = bme680_data->pressure / 100.0f;
+#endif
+		input_count++;
+	}
+
+	//if (process_data & BSEC_PROCESS_GAS)
+	{
+		inputs[input_count].sensor_id = BSEC_INPUT_GASRESISTOR;
+		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
+		inputs[input_count].signal = bme680_data->gas_resistance;
+		input_count++;
+	}
+
+	// Invoke main processing BSEC function
+	bsec_library_return_t status = bsec_do_steps(inputs, input_count, outputs, &output_count);
+
+	// Iterate through the BSEC output data, if the call succeeded
+	if (status == BSEC_OK)
+	{
+		for (int i = 0; i < output_count; i++)
+		{
+			switch (outputs[i].sensor_id)
+			{
+			case BSEC_OUTPUT_IAQ:
+				outputPayload.iaq = outputs[i];
+				break;
+			case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
+				outputPayload.temperature = outputs[i];
+				break;
+			case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
+				outputPayload.humidity = outputs[i];
+				break;
+			case BSEC_OUTPUT_RAW_TEMPERATURE:
+				outputPayload.rawTemperature = outputs[i];
+				break;
+			case BSEC_OUTPUT_RAW_PRESSURE:
+				outputPayload.rawPressure = outputs[i];
+				break;
+			case BSEC_OUTPUT_RAW_HUMIDITY:
+				outputPayload.rawHumidity = outputs[i];
+				break;
+			case BSEC_OUTPUT_RAW_GAS:
+				outputPayload.rawGas = outputs[i];
+				break;
+			case BSEC_OUTPUT_CO2_EQUIVALENT:
+				outputPayload.co2Equivalent = outputs[i];
+				break;
+			default:
+				Uart_WriteStringPoll("ERROR: Unhandled sensor type\n");
+				break;
+
+			}
+		}
+	}
+
+
+	// check to see if it's time to trigger the next measurement
+	bsec_bme_settings_t sensor_settings;
+	bsec_sensor_control(bme680_data->timestamp_ns, &sensor_settings);
+	outputPayload.sensor_settings = sensor_settings;
+}
+
+
 static _Noreturn void RTCoreMain(void)
 {
-	struct Payload
-	{
-		uint32_t ambient_light;
-		uint32_t ambient_noise;
-	} payload;
 
     // SCB->VTOR = ExceptionVectorTable
     WriteReg32(SCB_BASE, 0x08, (uint32_t)ExceptionVectorTable);
@@ -137,7 +375,7 @@ static _Noreturn void RTCoreMain(void)
 
     Uart_Init();
     Uart_WriteStringPoll("--------------------------------\r\n");
-    Uart_WriteStringPoll("IntercoreCommsADC_RTApp_MT3620_BareMetal\r\n");
+    Uart_WriteStringPoll("Environmental Monitor RealTime App\r\n");
     Uart_WriteStringPoll("App built on: " __DATE__ ", " __TIME__ "\r\n");
 
 	//// ADC Communication
@@ -151,7 +389,10 @@ static _Noreturn void RTCoreMain(void)
         }
     }
 
+	//delay before starting (seems to help when debugging all cores)
 	Gpt3_WaitUs(1000000);
+
+	InitialiseBsecLibrary();
 
     static const size_t payloadStart = 20;
 
@@ -161,7 +402,7 @@ static _Noreturn void RTCoreMain(void)
         uint32_t dataSize = sizeof(buf);		
 
 		// update ambient noise sample, this will block for ~105 ms
-		uint32_t ambient_noise = GetAmbientNoiseLevel();
+		uint32_t ambient_noise = 0;// GetAmbientNoiseLevel();
 
         // On success, dataSize is set to the actual number of bytes which were read.
         int r = DequeueData(outbound, inbound, sharedBufSize, buf, &dataSize);
@@ -171,64 +412,27 @@ static _Noreturn void RTCoreMain(void)
             continue;
         }
 
-		// For debug purposes 
-        Uart_WriteStringPoll("Received message of ");
-        Uart_WriteIntegerPoll(dataSize);
-        Uart_WriteStringPoll("bytes:\r\n");
+		struct bme680_raw_data* bme680_data = (struct bme680_raw_data *)(buf + payloadStart);
+
 
 		// Print the Component Id (A7 Core)
         Uart_WriteStringPoll("  Component Id (16 bytes): ");
         PrintGuid(buf);
         Uart_WriteStringPoll("\r\n");
 
-        // Print reserved field as little-endian 4-byte integer.
-        Uart_WriteStringPoll("  Reserved (4 bytes): ");
-        PrintBytes(buf, 19, 16);
-        Uart_WriteStringPoll("\r\n");
+		//feed new BME680 values to BSEC library
+		ProcessBsec(bme680_data);
 
-        // Print message as hex.
-        size_t payloadBytes = dataSize - payloadStart;
-        Uart_WriteStringPoll("  Payload (");
-        Uart_WriteIntegerPoll(payloadBytes);
-        Uart_WriteStringPoll(" bytes as hex): ");
-
-        for (size_t i = payloadStart; i < dataSize; ++i)
-		{
-            Uart_WriteHexBytePoll(buf[i]);
-            if (i != dataSize - 1) {
-                Uart_WriteStringPoll(":");
-            }
-        }
-        Uart_WriteStringPoll("\r\n");
-
-        // Print message as text.
-        Uart_WriteStringPoll("  Payload (");
-        Uart_WriteIntegerPoll(payloadBytes);
-        Uart_WriteStringPoll(" bytes as text): ");
-        for (size_t i = payloadStart; i < dataSize; ++i) 
-		{
-            char c[2];
-            c[0] = isprint(buf[i]) ? buf[i] : '.';
-            c[1] = '\0';
-            Uart_WriteStringPoll(c);
-        }
-        Uart_WriteStringPoll("\r\n");
 
 		// Read ADC channel 0 (ambient light)
-		payload.ambient_light = ReadAdc(0);
-		payload.ambient_noise = ambient_noise;
+		outputPayload.ambient_light = ReadAdc(0);
+		outputPayload.ambient_noise = ambient_noise;
 		
-		uint32_t mV = (payload.ambient_light * 2500) / 0xFFF;
-		Uart_WriteStringPoll("ADC channel 0: ");
-		Uart_WriteIntegerPoll(mV / 1000);
-		Uart_WriteStringPoll(".");
-		Uart_WriteIntegerWidthPoll(mV % 1000, 3);
-		Uart_WriteStringPoll(" V");
-		Uart_WriteStringPoll("\r\n");
+		uint32_t mV = (outputPayload.ambient_light * 2500) / 0xFFF;
 		
-		memcpy(&buf[payloadStart], (uint8_t*)&payload, sizeof(payload));
+		memcpy(&buf[payloadStart], (uint8_t*)&outputPayload, sizeof(outputPayload));
 
 		// Send buffer to A7 Core
-        EnqueueData(inbound, outbound, sharedBufSize, buf, payloadStart + sizeof(payload));
+        EnqueueData(inbound, outbound, sharedBufSize, buf, payloadStart + sizeof(outputPayload));
     }
 }

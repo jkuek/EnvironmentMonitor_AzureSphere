@@ -55,6 +55,7 @@
 #include "azure_iot_utilities.h"
 #include "connection_strings.h"
 #include "build_options.h"
+#include "bme680_integration.h"
 
 #include <applibs/log.h>
 #include <applibs/i2c.h>
@@ -76,6 +77,43 @@
 // This can be changed using the project property "Target Hardware Definition Directory".
 // This #include imports the sample_hardware abstraction from that hardware definition.
 #include <hw/sample_hardware.h>
+
+#include "bsec_datatypes.h"
+
+
+struct
+{
+	int64_t timestamp_ns;
+	uint32_t new_data; //will be non-zero if following data is new and valid, else 0
+
+	/*! Temperature in degree celsius x100 */
+	int16_t temperature;
+	/*! Pressure in Pascal */
+	uint32_t pressure;
+	/*! Humidity in % relative humidity x1000 */
+	uint32_t humidity;
+	/*! Gas resistance in Ohms */
+	uint32_t gas_resistance;
+
+} outputPayload;
+
+struct real_time_outputs
+{
+	uint32_t ambient_light;
+	uint32_t ambient_noise;
+
+	bsec_output_t iaq;
+	bsec_output_t temperature;
+	bsec_output_t humidity;
+	bsec_output_t rawTemperature;
+	bsec_output_t rawHumidity;
+	bsec_output_t rawPressure;
+	bsec_output_t rawGas;
+	bsec_output_t co2Equivalent;
+
+	bsec_bme_settings_t sensor_settings;
+} inputPayload;
+
 
 
 // Provide local access to variables in other files
@@ -139,7 +177,7 @@ volatile sig_atomic_t terminationRequired = false;
 float altitude;
 struct Lsm6dsoData lsm6dso_sensors;
 struct Lps22hhData lps22hh_sensors;
-struct Bme680Data bme680_sensors;
+//struct Bme680Data bme680_sensors;
 
 
 /// <summary>
@@ -301,18 +339,7 @@ static EventData buttonEventData = { .eventHandler = &ButtonTimerEventHandler };
 static void SocketEventHandler(EventData *eventData)
 {
 	// Read response from real-time capable application.
-	char rxBuf[32];
-	struct Payload
-	{
-		uint32_t ambient_light;
-		uint32_t ambient_noise;
-	} * payload;
-
-	union Analog_data
-	{
-		uint32_t u32;
-		uint8_t u8[4];
-	} analog_data;
+	char rxBuf[1024];
 
 	int bytesReceived = recv(sockFd, rxBuf, sizeof(rxBuf), 0);
 
@@ -321,28 +348,22 @@ static void SocketEventHandler(EventData *eventData)
 		terminationRequired = true;
 	}
 
-	if (bytesReceived >= sizeof(struct Payload))
+	if (bytesReceived >= sizeof(struct real_time_outputs))
 	{
-		payload = (struct Payload *)rxBuf;
+		struct real_time_outputs * payload = (struct real_time_outputs*)rxBuf;
+		// get voltage (2.5*adc_reading/4096)
+		// divide by 3650 (3.65 kohm) to get current (A)
+		// multiply by 1000000 to get uA
+		// divide by 0.1428 to get Lux (based on fluorescent light Fig. 1 datasheet)
+		// divide by 0.5 to get Lux (based on incandescent light Fig. 1 datasheet)
+		// We can simplify the factors, but for demonstration purpose it's OK
 		light_sensor = ((float)payload->ambient_light * 2.5 / 4095) * 1000000 / (3650 * 0.1428);
+
 		ambient_noise = payload->ambient_noise;
-
 		Log_Debug("Audio = %u\n", payload->ambient_noise);
+		Log_Debug("BSEC: T = %f, H = %f, P = %f, IAQ = %f\n", payload->temperature.signal, payload->humidity.signal, payload->rawPressure.signal, payload->iaq.signal);
 	}
 
-	// Copy data from Rx buffer to analog_data union
-	for (int i = 0; i < sizeof(analog_data); i++)
-	{
-		analog_data.u8[i] = rxBuf[i];
-	}
-
-	// get voltage (2.5*adc_reading/4096)
-	// divide by 3650 (3.65 kohm) to get current (A)
-	// multiply by 1000000 to get uA
-	// divide by 0.1428 to get Lux (based on fluorescent light Fig. 1 datasheet)
-	// divide by 0.5 to get Lux (based on incandescent light Fig. 1 datasheet)
-	// We can simplify the factors, but for demostration purpose it's OK
-	//light_sensor = ((float)analog_data.u32*2.5/4095)*1000000 / (3650*0.1428);
 
 	Log_Debug("Received %d bytes.\n", bytesReceived);
 }
@@ -357,7 +378,29 @@ static void TimerEventHandler(EventData *eventData)
 		return;
 	}
 
-	SendMessageToRTCore();
+
+	struct bme680_output bme680_data;
+	
+	ReadBme680(&bme680_data);
+	if (bme680_data.status & BME680_NEW_DATA_MSK)
+	{
+		//send data to BSEC (on RT app) for processing
+		outputPayload.timestamp_ns = bme680_data.timestamp_ns;
+		outputPayload.temperature = bme680_data.temperature;
+		outputPayload.humidity = bme680_data.humidity;
+		outputPayload.pressure = bme680_data.pressure;
+		outputPayload.gas_resistance = bme680_data.gas_resistance;
+
+		//print raw values for debug
+		Log_Debug("BME680: T = %d, H = %d, P = %d, G = %d\n",
+			bme680_data.temperature,
+			bme680_data.humidity,
+			bme680_data.pressure,
+			bme680_data.gas_resistance);
+
+		SendMessageToRTCore();
+	}
+
 }
 
 /// <summary>
@@ -365,14 +408,12 @@ static void TimerEventHandler(EventData *eventData)
 /// </summary>
 static void SendMessageToRTCore(void)
 {
-	static int iter = 0;
+	//static char txMessage[256];
 
-	// Send "Read-ADC-%d" message to real-time capable application.
-	static char txMessage[32];
-	sprintf(txMessage, "Read-ADC-%d", iter++);
-	Log_Debug("Sending: %s\n", txMessage);
+	//Log_Debug("Sending: %s\n", txMessage);
 
-	int bytesSent = send(sockFd, txMessage, strlen(txMessage), 0);
+	//int bytesSent = send(sockFd, txMessage, strlen(txMessage), 0);
+	int bytesSent = send(sockFd, (void *)&outputPayload, sizeof(outputPayload), 0);
 	if (bytesSent == -1)
 	{
 		Log_Debug("ERROR: Unable to send message: %d (%s)\n", errno, strerror(errno));
@@ -501,19 +542,20 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 	}
 
 	//// OLED
-	update_oled();
+	//update_oled();
 
-	if (ReadBME680(&bme680_sensors))
-	{
-		json_object_set_number(root_object, "temperature", bme680_sensors.temperature);
-		json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
-		json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
-		//TODO: json_object_set_number(root_object, "iaq", 2);
 
-		float dew_point = CalculateDewPoint(bme680_sensors.temperature, bme680_sensors.humidity);
+	//if (ReadBME680(&bme680_sensors))
+	//{
+	//	json_object_set_number(root_object, "temperature", bme680_sensors.temperature);
+	//	json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
+	//	json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
+	//	//TODO: json_object_set_number(root_object, "iaq", 2);
 
-		json_object_set_number(root_object, "dew_point", dew_point);
-	}
+	//	float dew_point = CalculateDewPoint(bme680_sensors.temperature, bme680_sensors.humidity);
+
+	//	json_object_set_number(root_object, "dew_point", dew_point);
+	//}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 	{
@@ -614,6 +656,8 @@ static int InitPeripheralsAndHandlers(void)
 	if (initI2c() == -1) {
 		return -1;
 	}
+
+	InitBme680();
 
 	//set up a periodic timer to read the sensors
 
