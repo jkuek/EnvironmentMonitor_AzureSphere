@@ -31,3 +31,4 @@ struct Lps22hhData
 extern struct Lsm6dsoData lsm6dso_sensors;
 extern struct Lps22hhData lps22hh_sensors;
 extern float altitude;
+extern float light_sensor;

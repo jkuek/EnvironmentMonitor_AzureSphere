@@ -214,20 +214,6 @@ int initI2c(void) {
 		return -1;
 	}
 
-	// Start OLED
-	if (oled_init())
-	{
-		Log_Debug("OLED not found!\n");
-	}
-	else
-	{
-		Log_Debug("OLED found!\n");
-	}
-
-	// Draw AVNET logo
-	//oled_draw_logo();
-	oled_i2c_bus_status(0);
-
 	// Start lsm6dso specific init
 
 	// Initialize lsm6dso mems driver interface
@@ -240,17 +226,13 @@ int initI2c(void) {
 	if (whoamI != LSM6DSO_ID) {
 		Log_Debug("LSM6DSO not found!\n");
 
-		// OLED update
 		lsm6dso_status = 1;
-		oled_i2c_bus_status(1);
 		return -1;
 	}
 	else {
 		Log_Debug("LSM6DSO Found!\n");
 
-		// OLED update
 		lsm6dso_status = 0;
-		oled_i2c_bus_status(1);
 	}
 		
 	 // Restore default configuration
@@ -298,18 +280,14 @@ int initI2c(void) {
 		if (whoamI != LPS22HH_ID) {
 			Log_Debug("LPS22HH not found!\n");
 			
-			// OLED update
 			lps22hh_status = 1;
-			oled_i2c_bus_status(2);
 
 		}
 		else {
 			lps22hhDetected = true;
 			Log_Debug("LPS22HH Found!\n");
 
-			// OLED update
 			lps22hh_status = 0;
-			oled_i2c_bus_status(2);
 		}
 
 		// Restore the default configuration

@@ -24,35 +24,17 @@
 #define MAX_AMBIENT_BUFFER_SIZE (2000)
 
 
-
 struct bme680_raw_data
 {
 	int64_t timestamp_ns;
-	uint32_t new_data; //will be non-zero if following data is new and valid, else 0
+	uint32_t new_data; /* non-zero if following data is new and valid, else 0 */
 
-#ifndef BME680_FLOAT_POINT_COMPENSATION
-/*! Temperature in degree celsius x100 */
-	int16_t temperature;
-	/*! Pressure in Pascal */
-	uint32_t pressure;
-	/*! Humidity in % relative humidity x1000 */
-	uint32_t humidity;
-	/*! Gas resistance in Ohms */
-	uint32_t gas_resistance;
-#else
-	/*! Temperature in degree celsius */
-	float temperature;
-	/*! Pressure in Pascal */
-	float pressure;
-	/*! Humidity in % relative humidity x1000 */
-	float humidity;
-	/*! Gas resistance in Ohms */
-	float gas_resistance;
+	float temperature; /* degrees C */
+	float pressure; /* kPa */
+	float humidity; /*! Relative humidity in % */
+	float gas_resistance; /*! Gas resistance in Ohms */
 
-#endif
-
-
-};
+} bme680_data;
 
 struct real_time_outputs
 {
@@ -135,9 +117,10 @@ bool InitialiseBsecLibrary(void)
 	/*
 		Configure the BSEC library
 		The default configuration is "generic_18v_300s_4d"
-		I will use "generic_33v_3s_4d", since we are running from 3.3V and I want data every 3s with a 4-day calibration interval
+		I used "generic_33v_3s_4d", since we are running from 3.3V and I want data every 3s with a 4-day calibration interval
+		Copy the appropriate file from the BSEC release ZIP.
 	*/
-	bsec_result = bsec_set_configuration(bsec_config_iaq, sizeof(bsec_config_iaq), work_buffer, sizeof(work_buffer));
+	bsec_result = bsec_set_configuration(bsec_config_iaq, sizeof(bsec_config_iaq), work_buffer, n_work_buffer);
 	if (bsec_result != BSEC_OK)
 	{
 		return false;
@@ -275,11 +258,7 @@ static void ProcessBsec(struct bme680_raw_data * bme680_data)
 	{
 		inputs[input_count].sensor_id = BSEC_INPUT_TEMPERATURE;
 		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
-#ifdef BME680_FLOAT_POINT_COMPENSATION
 		inputs[input_count].signal = bme680_data->temperature;
-#else
-		inputs[input_count].signal = bme680_data->temperature / 100.0f;
-#endif
 		input_count++;
 	}
 
@@ -287,11 +266,7 @@ static void ProcessBsec(struct bme680_raw_data * bme680_data)
 	{
 		inputs[input_count].sensor_id = BSEC_INPUT_HUMIDITY;
 		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
-#ifdef BME680_FLOAT_POINT_COMPENSATION
 		inputs[input_count].signal = bme680_data->humidity;
-#else
-		inputs[input_count].signal = bme680_data->humidity / 1000.0f;
-#endif
 		input_count++;
 	}
 
@@ -299,11 +274,7 @@ static void ProcessBsec(struct bme680_raw_data * bme680_data)
 	{
 		inputs[input_count].sensor_id = BSEC_INPUT_PRESSURE;
 		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
-#ifdef BME680_FLOAT_POINT_COMPENSATION
 		inputs[input_count].signal = bme680_data->pressure;
-#else
-		inputs[input_count].signal = bme680_data->pressure / 100.0f;
-#endif
 		input_count++;
 	}
 
@@ -367,11 +338,14 @@ static void ProcessBsec(struct bme680_raw_data * bme680_data)
 
 static _Noreturn void RTCoreMain(void)
 {
-
     // SCB->VTOR = ExceptionVectorTable
     WriteReg32(SCB_BASE, 0x08, (uint32_t)ExceptionVectorTable);
 
 	Gpt3_Init();
+
+	//delay before starting (seems to help when debugging all cores)
+	Gpt3_WaitUs(2000000);
+
 
     Uart_Init();
     Uart_WriteStringPoll("--------------------------------\r\n");
@@ -388,9 +362,6 @@ static _Noreturn void RTCoreMain(void)
             // empty.
         }
     }
-
-	//delay before starting (seems to help when debugging all cores)
-	Gpt3_WaitUs(1000000);
 
 	InitialiseBsecLibrary();
 

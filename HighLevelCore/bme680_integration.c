@@ -1,6 +1,8 @@
 #include <errno.h>
+#include <string.h>
 
 #include <applibs/log.h>
+#include <applibs/i2c.h>
 #include "i2c.h"
 #include "drivers/BME680/bme680.h"
 #include "bsec_datatypes.h"
@@ -32,7 +34,7 @@ void user_delay_ms(uint32_t period)
 
 	//convert period (ms) to sec/nanosec
 	struct timespec ts;
-	ts.tv_sec = period / 1000;
+	ts.tv_sec = (time_t)period / 1000;
 	ts.tv_nsec = 1000000 * (period % 1000);
 	nanosleep(&ts, NULL);
 }
@@ -247,12 +249,20 @@ static bool bme680_bsec_read_data(struct bme680_output* b)
 
 	if (result == BME680_OK)
 	{
-		b->timestamp_ns = timestamp_ns;
-		b->status = data.status;
+#ifndef BME680_FLOAT_POINT_COMPENSATION
+		b->temperature = data.temperature / 100.0f;
+		b->humidity = data.humidity / 1000.0f;
+		b->pressure = data.pressure / 100.0f;
+		b->gas_resistance = data.gas_resistance;
+#else
 		b->temperature = data.temperature;
 		b->humidity = data.humidity;
 		b->pressure = data.pressure;
 		b->gas_resistance = data.gas_resistance;
+#endif
+
+		b->timestamp_ns = timestamp_ns;
+		b->status = data.status;
 	}
 	else
 	{

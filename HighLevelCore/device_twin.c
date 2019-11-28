@@ -27,14 +27,6 @@ bool userLedGreenIsOn = false;
 bool userLedBlueIsOn = false;
 bool appLedIsOn = false;
 bool wifiLedIsOn = false;
-bool clkBoardRelay1IsOn = true;
-bool clkBoardRelay2IsOn = true;
-
-//// OLED
-uint8_t oled_ms1[CLOUD_MSG_SIZE];
-uint8_t oled_ms2[CLOUD_MSG_SIZE];
-uint8_t oled_ms3[CLOUD_MSG_SIZE];
-uint8_t oled_ms4[CLOUD_MSG_SIZE];
 
 extern int userLedRedFd;
 extern int userLedGreenFd;
@@ -42,8 +34,6 @@ extern int userLedBlueFd;
 
 extern int appLedFd;
 extern int wifiLedFd;
-extern int clickSocket1Relay1Fd;
-extern int clickSocket1Relay2Fd;
 
 extern volatile sig_atomic_t terminationRequired;
 
@@ -73,12 +63,6 @@ twin_t twinArray[] = {
 	{.twinKey = "userLedBlue",.twinVar = &userLedBlueIsOn,.twinFd = &userLedBlueFd,.twinGPIO = AVNET_MT3620_SK_USER_LED_BLUE,.twinType = TYPE_BOOL,.active_high = false},
 	{.twinKey = "appLed",.twinVar = &appLedIsOn,.twinFd = &appLedFd,.twinGPIO = AVNET_MT3620_SK_APP_STATUS_LED_YELLOW,.twinType = TYPE_BOOL,.active_high = false},
 	{.twinKey = "wifiLed",.twinVar = &wifiLedIsOn,.twinFd = &wifiLedFd,.twinGPIO = AVNET_MT3620_SK_WLAN_STATUS_LED_YELLOW,.twinType = TYPE_BOOL,.active_high = false},
-	//{.twinKey = "clickBoardRelay1",.twinVar = &clkBoardRelay1IsOn,.twinFd = &clickSocket1Relay1Fd,.twinGPIO = AVNET_MT3620_SK_GPIO34,.twinType = TYPE_BOOL,.active_high = true},
-	//{.twinKey = "clickBoardRelay2",.twinVar = &clkBoardRelay2IsOn,.twinFd = &clickSocket1Relay2Fd,.twinGPIO = AVNET_MT3620_SK_GPIO0,.twinType = TYPE_BOOL,.active_high = true},
-	//{.twinKey = "OledDisplayMsg1",.twinVar = oled_ms1,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	//{.twinKey = "OledDisplayMsg2",.twinVar = oled_ms2,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	//{.twinKey = "OledDisplayMsg3",.twinVar = oled_ms3,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true},
-	//{.twinKey = "OledDisplayMsg4",.twinVar = oled_ms4,.twinFd = NULL,.twinGPIO = NO_GPIO_ASSOCIATED_WITH_TWIN,.twinType = TYPE_STRING,.active_high = true}
 };
 
 // Calculate how many twin_t items are in the array.  We use this to iterate through the structure.

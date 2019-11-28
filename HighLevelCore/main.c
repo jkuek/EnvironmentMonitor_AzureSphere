@@ -4,37 +4,7 @@
    /************************************************************************************************
 
    This project was originally based on the AvnetStarterKitReferenceDesign project but has been heavily modified.
-   Sphere OS: 19.05
-   This file contains the 'main' function. Program execution begins and ends there
-
-   Authors:
-   Peter Fenn (Avnet Engineering & Technology)
-   Brian Willess (Avnet Engineering & Technology)
-
-   Purpose:
-   Using the Avnet Azure Sphere Starter Kit demonstrate the following features
-
-   1. Read X,Y,Z accelerometer data from the onboard LSM6DSO device using the I2C Interface
-   2. Read X,Y,Z Angular rate data from the onboard LSM6DSO device using the I2C Interface
-   3. Read the barometric pressure from the onboard LPS22HH device using the I2C Interface
-   4. Read the temperature from the onboard LPS22HH device using the I2C Interface
-   5. Read the state of the A and B buttons
-   6. Read BSSID address, Wi-Fi AP SSID, Wi-Fi Frequency
-   *************************************************************************************************
-      Connected application features: When connected to Azure IoT Hub or IoT Central
-   *************************************************************************************************
-   7. Send X,Y,Z accelerometer data to Azure
-   8. Send barometric pressure data to Azure
-   9. Send button state data to Azure
-   10. Send BSSID address, Wi-Fi AP SSID, Wi-Fi Frequency data to Azure
-   11. Send the application version string to Azure
-   12. Control user RGB LEDs from the cloud using device twin properties
-   13. Control optional Relay Click relays from the cloud using device twin properties
-   14. Send Application version up as a device twin property
-   TODO
-   1. Add support for a OLED display
-   2. Add supprt for on-board light sensor
-   	 
+      	 
    *************************************************************************************************/
 
 #include <errno.h>
@@ -64,9 +34,6 @@
 #include <azureiot/iothub_device_client_ll.h>
 
 
-//// OLED
-#include "oled.h"
-
 //// ADC connection
 #include <sys/time.h>
 #include <sys/socket.h>
@@ -80,20 +47,20 @@
 
 #include "bsec_datatypes.h"
 
+#define SSID_MAX_LEGTH    15
 
-struct
+
+
+//define the structures for inter-core comms
+struct real_time_inputs
 {
 	int64_t timestamp_ns;
-	uint32_t new_data; //will be non-zero if following data is new and valid, else 0
+	uint32_t new_data; /* non-zero if following data is new and valid, else 0 */
 
-	/*! Temperature in degree celsius x100 */
-	int16_t temperature;
-	/*! Pressure in Pascal */
-	uint32_t pressure;
-	/*! Humidity in % relative humidity x1000 */
-	uint32_t humidity;
-	/*! Gas resistance in Ohms */
-	uint32_t gas_resistance;
+	float temperature; /* degrees C */
+	float pressure; /* kPa */
+	float humidity; /*! Relative humidity in % */
+	float gas_resistance; /*! Gas resistance in Ohms */
 
 } outputPayload;
 
@@ -114,6 +81,17 @@ struct real_time_outputs
 	bsec_bme_settings_t sensor_settings;
 } inputPayload;
 
+
+typedef struct
+{
+	uint8_t SSID[WIFICONFIG_SSID_MAX_LENGTH];
+	uint32_t frequency_MHz;
+	int8_t rssi;
+} network_var;
+
+struct real_time_outputs real_time;
+
+network_var network_data;
 
 
 // Provide local access to variables in other files
@@ -137,8 +115,6 @@ int userLedGreenFd = -1;
 int userLedBlueFd = -1;
 int appLedFd = -1;
 int wifiLedFd = -1;
-int clickSocket1Relay1Fd = -1;
-int clickSocket1Relay2Fd = -1;
 
 //// ADC connection
 static const char rtAppComponentId[] = "54e89e6e-13fb-4dca-a067-279e8f060cf7";
@@ -173,12 +149,10 @@ static const char cstrButtonTelemetryJson[] = "{\"%s\":\"%d\"}";
 // Termination state
 volatile sig_atomic_t terminationRequired = false;
 
-
 float altitude;
+float light_sensor;
 struct Lsm6dsoData lsm6dso_sensors;
 struct Lps22hhData lps22hh_sensors;
-//struct Bme680Data bme680_sensors;
-
 
 /// <summary>
 ///     Signal handler for termination requests. This handler must be async-signal-safe.
@@ -281,14 +255,6 @@ static void ButtonTimerEventHandler(EventData *eventData)
 			Log_Debug("Button B pressed!\n");
 			sendTelemetryButtonB = true;
 
-			//// OLED
-
-			oled_state++;
-
-			if (oled_state > OLED_NUM_SCREEN)
-			{
-				oled_state = 0;
-			}
 		}
 		else {
 			Log_Debug("Button B released!\n");
@@ -361,7 +327,10 @@ static void SocketEventHandler(EventData *eventData)
 
 		ambient_noise = payload->ambient_noise;
 		Log_Debug("Audio = %u\n", payload->ambient_noise);
-		Log_Debug("BSEC: T = %f, H = %f, P = %f, IAQ = %f\n", payload->temperature.signal, payload->humidity.signal, payload->rawPressure.signal, payload->iaq.signal);
+		Log_Debug("BSEC: T = %.2f, H = %.2f, P = %.2f, IAQ = %d\n", payload->temperature.signal, payload->humidity.signal, payload->rawPressure.signal, (int)payload->iaq.signal);
+		Log_Debug(" RAW: T = %.2f, H = %.2f, C = %.2f, IAQ = %d\n", payload->rawTemperature.signal, payload->rawHumidity.signal, payload->co2Equivalent.signal, (int)payload->iaq.accuracy);
+
+		memcpy(&real_time, payload, sizeof(real_time)); //save a copy
 	}
 
 
@@ -384,15 +353,16 @@ static void TimerEventHandler(EventData *eventData)
 	ReadBme680(&bme680_data);
 	if (bme680_data.status & BME680_NEW_DATA_MSK)
 	{
-		//send data to BSEC (on RT app) for processing
+		//copy data to be sent to BSEC (on RT app) for processing
 		outputPayload.timestamp_ns = bme680_data.timestamp_ns;
 		outputPayload.temperature = bme680_data.temperature;
 		outputPayload.humidity = bme680_data.humidity;
 		outputPayload.pressure = bme680_data.pressure;
 		outputPayload.gas_resistance = bme680_data.gas_resistance;
 
+
 		//print raw values for debug
-		Log_Debug("BME680: T = %d, H = %d, P = %d, G = %d\n",
+		Log_Debug("BME680: T = %.2f, H = %.2f, P = %.2f, G = %.2f\n",
 			bme680_data.temperature,
 			bme680_data.humidity,
 			bme680_data.pressure,
@@ -509,15 +479,6 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 		//These values are unused, instead use temperature and pressure from the BME680
 	}
 
-	sensor_data.acceleration_mg[0] = lsm6dso_sensors.accelerometer.x;
-	sensor_data.acceleration_mg[1] = lsm6dso_sensors.accelerometer.y;
-	sensor_data.acceleration_mg[2] = lsm6dso_sensors.accelerometer.z;
-	sensor_data.angular_rate_dps[0] = lsm6dso_sensors.gyroscope.x;
-	sensor_data.angular_rate_dps[1] = lsm6dso_sensors.gyroscope.y;
-	sensor_data.angular_rate_dps[2] = lsm6dso_sensors.gyroscope.z;
-	sensor_data.lsm6dsoTemperature_degC = lsm6dso_sensors.temperature;
-	sensor_data.lps22hhpressure_hPa = lps22hh_sensors.pressure_hPa;
-	sensor_data.lps22hhTemperature_degC = lps22hh_sensors.temperature_degC;
 
 	/*
 	The ALTITUDE value calculated is actually "Pressure Altitude". This lacks correction for temperature (and humidity)
@@ -539,40 +500,22 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 
 		Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\n", light_sensor);
 
-	}
-
-	//// OLED
-	//update_oled();
-
+	}	
 
 	//if (ReadBME680(&bme680_sensors))
-	//{
-	//	json_object_set_number(root_object, "temperature", bme680_sensors.temperature);
-	//	json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
-	//	json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
-	//	//TODO: json_object_set_number(root_object, "iaq", 2);
+	{
+		json_object_set_number(root_object, "temperature", real_time.temperature.signal);
+		json_object_set_number(root_object, "humidity", real_time.humidity.signal);
+		json_object_set_number(root_object, "pressure", real_time.rawPressure.signal);
+		json_object_set_number(root_object, "iaq", real_time.iaq.signal);
 
-	//	float dew_point = CalculateDewPoint(bme680_sensors.temperature, bme680_sensors.humidity);
+		float dew_point = CalculateDewPoint(real_time.temperature.signal, real_time.humidity.signal);
 
-	//	json_object_set_number(root_object, "dew_point", dew_point);
-	//}
+		json_object_set_number(root_object, "dew_point", dew_point);
+	}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 	{
-
-		//// Allocate memory for a telemetry message to Azure
-		//char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
-		//if (pjsonBuffer == NULL) {
-		//	Log_Debug("ERROR: not enough memory to send telemetry");
-		//}
-		//
-		//snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
-		//	angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
-
-		//Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
-		//
-		//AzureIoT_SendMessage(pjsonBuffer);
-		//free(pjsonBuffer);
 
 		//create json string from object
 		serialized_string = json_serialize_to_string(root_value);
@@ -788,7 +731,6 @@ int main(int argc, char *argv[])
 		if (result < 0) 
 		{
 			// Log_Debug("INFO: Not currently connected to a WiFi network.\n");
-			//// OLED
 			strncpy(network_data.SSID, "Not Connected", 20);
 
 			network_data.frequency_MHz = 0;
@@ -821,7 +763,6 @@ int main(int argc, char *argv[])
 #endif 
 			}
 
-			//// OLED
 
 			memset(network_data.SSID, 0, WIFICONFIG_SSID_MAX_LENGTH);
 			if (network.ssidLength <= SSID_MAX_LEGTH)
