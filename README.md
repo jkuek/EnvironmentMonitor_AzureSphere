@@ -4,4 +4,4 @@ This project is my entry to the [element14 Sensing the World challenge](https://
 Parts used:
 * http://cloudconnectkits.org/product/azure-sphere-starter-kit
 * https://www.mikroe.com/environment-click
-
+* https://www.mikroe.com/mic-click
