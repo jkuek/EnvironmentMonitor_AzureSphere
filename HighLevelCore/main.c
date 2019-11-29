@@ -4,37 +4,7 @@
    /************************************************************************************************
 
    This project was originally based on the AvnetStarterKitReferenceDesign project but has been heavily modified.
-   Sphere OS: 19.05
-   This file contains the 'main' function. Program execution begins and ends there
-
-   Authors:
-   Peter Fenn (Avnet Engineering & Technology)
-   Brian Willess (Avnet Engineering & Technology)
-
-   Purpose:
-   Using the Avnet Azure Sphere Starter Kit demonstrate the following features
-
-   1. Read X,Y,Z accelerometer data from the onboard LSM6DSO device using the I2C Interface
-   2. Read X,Y,Z Angular rate data from the onboard LSM6DSO device using the I2C Interface
-   3. Read the barometric pressure from the onboard LPS22HH device using the I2C Interface
-   4. Read the temperature from the onboard LPS22HH device using the I2C Interface
-   5. Read the state of the A and B buttons
-   6. Read BSSID address, Wi-Fi AP SSID, Wi-Fi Frequency
-   *************************************************************************************************
-      Connected application features: When connected to Azure IoT Hub or IoT Central
-   *************************************************************************************************
-   7. Send X,Y,Z accelerometer data to Azure
-   8. Send barometric pressure data to Azure
-   9. Send button state data to Azure
-   10. Send BSSID address, Wi-Fi AP SSID, Wi-Fi Frequency data to Azure
-   11. Send the application version string to Azure
-   12. Control user RGB LEDs from the cloud using device twin properties
-   13. Control optional Relay Click relays from the cloud using device twin properties
-   14. Send Application version up as a device twin property
-   TODO
-   1. Add support for a OLED display
-   2. Add supprt for on-board light sensor
-   	 
+      	 
    *************************************************************************************************/
 
 #include <errno.h>
@@ -55,6 +25,7 @@
 #include "azure_iot_utilities.h"
 #include "connection_strings.h"
 #include "build_options.h"
+#include "bme680_integration.h"
 
 #include <applibs/log.h>
 #include <applibs/i2c.h>
@@ -62,9 +33,6 @@
 #include <applibs/wificonfig.h>
 #include <azureiot/iothub_device_client_ll.h>
 
-
-//// OLED
-#include "oled.h"
 
 //// ADC connection
 #include <sys/time.h>
@@ -76,6 +44,54 @@
 // This can be changed using the project property "Target Hardware Definition Directory".
 // This #include imports the sample_hardware abstraction from that hardware definition.
 #include <hw/sample_hardware.h>
+
+#include "bsec_datatypes.h"
+
+#define SSID_MAX_LEGTH    15
+
+
+
+//define the structures for inter-core comms
+struct real_time_inputs
+{
+	int64_t timestamp_ns;
+	uint32_t new_data; /* non-zero if following data is new and valid, else 0 */
+
+	float temperature; /* degrees C */
+	float pressure; /* kPa */
+	float humidity; /*! Relative humidity in % */
+	float gas_resistance; /*! Gas resistance in Ohms */
+
+} outputPayload;
+
+struct real_time_outputs
+{
+	uint32_t ambient_light;
+	uint32_t ambient_noise;
+
+	bsec_output_t iaq;
+	bsec_output_t temperature;
+	bsec_output_t humidity;
+	bsec_output_t rawTemperature;
+	bsec_output_t rawHumidity;
+	bsec_output_t rawPressure;
+	bsec_output_t rawGas;
+	bsec_output_t co2Equivalent;
+
+	bsec_bme_settings_t sensor_settings;
+} inputPayload;
+
+
+typedef struct
+{
+	uint8_t SSID[WIFICONFIG_SSID_MAX_LENGTH];
+	uint32_t frequency_MHz;
+	int8_t rssi;
+} network_var;
+
+struct real_time_outputs real_time;
+
+network_var network_data;
 
 
 // Provide local access to variables in other files
@@ -99,17 +115,15 @@ int userLedGreenFd = -1;
 int userLedBlueFd = -1;
 int appLedFd = -1;
 int wifiLedFd = -1;
-int clickSocket1Relay1Fd = -1;
-int clickSocket1Relay2Fd = -1;
 
 //// ADC connection
-static const char rtAppComponentId[] = "005180bc-402f-4cb3-a662-72937dbcde47";
+static const char rtAppComponentId[] = "54e89e6e-13fb-4dca-a067-279e8f060cf7";
 static int sockFd = -1;
 static void SendMessageToRTCore(void);
 static void TimerEventHandler(EventData *eventData);
 static void SocketEventHandler(EventData *eventData);
 static int timerFd = -1;
-uint8_t RTCore_status;
+uint8_t RTCore_status = 1;
 
 // event handler data structures. Only the event handler field needs to be populated.
 static EventData timerEventData = { .eventHandler = &TimerEventHandler };
@@ -135,12 +149,10 @@ static const char cstrButtonTelemetryJson[] = "{\"%s\":\"%d\"}";
 // Termination state
 volatile sig_atomic_t terminationRequired = false;
 
-
 float altitude;
+float light_sensor;
 struct Lsm6dsoData lsm6dso_sensors;
 struct Lps22hhData lps22hh_sensors;
-struct Bme680Data bme680_sensors;
-
 
 /// <summary>
 ///     Signal handler for termination requests. This handler must be async-signal-safe.
@@ -243,14 +255,6 @@ static void ButtonTimerEventHandler(EventData *eventData)
 			Log_Debug("Button B pressed!\n");
 			sendTelemetryButtonB = true;
 
-			//// OLED
-
-			oled_state++;
-
-			if (oled_state > OLED_NUM_SCREEN)
-			{
-				oled_state = 0;
-			}
 		}
 		else {
 			Log_Debug("Button B released!\n");
@@ -301,18 +305,7 @@ static EventData buttonEventData = { .eventHandler = &ButtonTimerEventHandler };
 static void SocketEventHandler(EventData *eventData)
 {
 	// Read response from real-time capable application.
-	char rxBuf[32];
-	struct Payload
-	{
-		uint32_t ambient_light;
-		uint32_t ambient_noise;
-	} * payload;
-
-	union Analog_data
-	{
-		uint32_t u32;
-		uint8_t u8[4];
-	} analog_data;
+	char rxBuf[1024];
 
 	int bytesReceived = recv(sockFd, rxBuf, sizeof(rxBuf), 0);
 
@@ -321,28 +314,25 @@ static void SocketEventHandler(EventData *eventData)
 		terminationRequired = true;
 	}
 
-	if (bytesReceived >= sizeof(struct Payload))
+	if (bytesReceived >= sizeof(struct real_time_outputs))
 	{
-		payload = (struct Payload *)rxBuf;
+		struct real_time_outputs * payload = (struct real_time_outputs*)rxBuf;
+		// get voltage (2.5*adc_reading/4096)
+		// divide by 3650 (3.65 kohm) to get current (A)
+		// multiply by 1000000 to get uA
+		// divide by 0.1428 to get Lux (based on fluorescent light Fig. 1 datasheet)
+		// divide by 0.5 to get Lux (based on incandescent light Fig. 1 datasheet)
+		// We can simplify the factors, but for demonstration purpose it's OK
 		light_sensor = ((float)payload->ambient_light * 2.5 / 4095) * 1000000 / (3650 * 0.1428);
+
 		ambient_noise = payload->ambient_noise;
-
 		Log_Debug("Audio = %u\n", payload->ambient_noise);
+		Log_Debug("BSEC: T = %.2f, H = %.2f, P = %.2f, IAQ = %d\n", payload->temperature.signal, payload->humidity.signal, payload->rawPressure.signal, (int)payload->iaq.signal);
+		Log_Debug(" RAW: T = %.2f, H = %.2f, C = %.2f, IAQ = %d\n", payload->rawTemperature.signal, payload->rawHumidity.signal, payload->co2Equivalent.signal, (int)payload->iaq.accuracy);
+
+		memcpy(&real_time, payload, sizeof(real_time)); //save a copy
 	}
 
-	// Copy data from Rx buffer to analog_data union
-	for (int i = 0; i < sizeof(analog_data); i++)
-	{
-		analog_data.u8[i] = rxBuf[i];
-	}
-
-	// get voltage (2.5*adc_reading/4096)
-	// divide by 3650 (3.65 kohm) to get current (A)
-	// multiply by 1000000 to get uA
-	// divide by 0.1428 to get Lux (based on fluorescent light Fig. 1 datasheet)
-	// divide by 0.5 to get Lux (based on incandescent light Fig. 1 datasheet)
-	// We can simplify the factors, but for demostration purpose it's OK
-	//light_sensor = ((float)analog_data.u32*2.5/4095)*1000000 / (3650*0.1428);
 
 	Log_Debug("Received %d bytes.\n", bytesReceived);
 }
@@ -357,7 +347,30 @@ static void TimerEventHandler(EventData *eventData)
 		return;
 	}
 
-	SendMessageToRTCore();
+
+	struct bme680_output bme680_data;
+	
+	ReadBme680(&bme680_data);
+	if (bme680_data.status & BME680_NEW_DATA_MSK)
+	{
+		//copy data to be sent to BSEC (on RT app) for processing
+		outputPayload.timestamp_ns = bme680_data.timestamp_ns;
+		outputPayload.temperature = bme680_data.temperature;
+		outputPayload.humidity = bme680_data.humidity;
+		outputPayload.pressure = bme680_data.pressure;
+		outputPayload.gas_resistance = bme680_data.gas_resistance;
+
+
+		//print raw values for debug
+		Log_Debug("BME680: T = %.2f, H = %.2f, P = %.2f, G = %.2f\n",
+			bme680_data.temperature,
+			bme680_data.humidity,
+			bme680_data.pressure,
+			bme680_data.gas_resistance);
+
+		SendMessageToRTCore();
+	}
+
 }
 
 /// <summary>
@@ -365,14 +378,7 @@ static void TimerEventHandler(EventData *eventData)
 /// </summary>
 static void SendMessageToRTCore(void)
 {
-	static int iter = 0;
-
-	// Send "Read-ADC-%d" message to real-time capable application.
-	static char txMessage[32];
-	sprintf(txMessage, "Read-ADC-%d", iter++);
-	Log_Debug("Sending: %s\n", txMessage);
-
-	int bytesSent = send(sockFd, txMessage, strlen(txMessage), 0);
+	int bytesSent = send(sockFd, (void *)&outputPayload, sizeof(outputPayload), 0);
 	if (bytesSent == -1)
 	{
 		Log_Debug("ERROR: Unable to send message: %d (%s)\n", errno, strerror(errno));
@@ -409,6 +415,43 @@ float CalculateDewPoint(float temperature, float relative_humidity)
 	float dew_point = (b * alpha) / (a - alpha);
 
 	return dew_point;
+}
+
+const char* GetIaqState(int iaq)
+{
+	char* result;
+
+	if (iaq < 50)
+	{
+		result = "Excellent";
+	}
+	else if (iaq < 100)
+	{
+		result = "Good";
+	}
+	else if (iaq < 150)
+	{
+		result = "Light";
+	}
+	else if (iaq < 200)
+	{
+		result = "Moderate";
+	}
+	else if (iaq < 250)
+	{
+		result = "Heavy";
+	}
+	else if (iaq < 350)
+	{
+		result = "Severe";
+	}
+	else
+	{
+		result = "Extreme";
+	}
+
+
+	return result;
 }
 
 
@@ -468,15 +511,6 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 		//These values are unused, instead use temperature and pressure from the BME680
 	}
 
-	sensor_data.acceleration_mg[0] = lsm6dso_sensors.accelerometer.x;
-	sensor_data.acceleration_mg[1] = lsm6dso_sensors.accelerometer.y;
-	sensor_data.acceleration_mg[2] = lsm6dso_sensors.accelerometer.z;
-	sensor_data.angular_rate_dps[0] = lsm6dso_sensors.gyroscope.x;
-	sensor_data.angular_rate_dps[1] = lsm6dso_sensors.gyroscope.y;
-	sensor_data.angular_rate_dps[2] = lsm6dso_sensors.gyroscope.z;
-	sensor_data.lsm6dsoTemperature_degC = lsm6dso_sensors.temperature;
-	sensor_data.lps22hhpressure_hPa = lps22hh_sensors.pressure_hPa;
-	sensor_data.lps22hhTemperature_degC = lps22hh_sensors.temperature_degC;
 
 	/*
 	The ALTITUDE value calculated is actually "Pressure Altitude". This lacks correction for temperature (and humidity)
@@ -498,39 +532,23 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 
 		Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\n", light_sensor);
 
-	}
+	}	
 
-	//// OLED
-	update_oled();
-
-	if (ReadBME680(&bme680_sensors))
+	//if (ReadBME680(&bme680_sensors))
 	{
-		json_object_set_number(root_object, "temperature", bme680_sensors.temperature);
-		json_object_set_number(root_object, "humidity", bme680_sensors.humidity);
-		json_object_set_number(root_object, "pressure", bme680_sensors.pressure);
-		//TODO: json_object_set_number(root_object, "iaq", 2);
+		json_object_set_number(root_object, "temperature", real_time.temperature.signal);
+		json_object_set_number(root_object, "humidity", real_time.humidity.signal);
+		json_object_set_number(root_object, "pressure", real_time.rawPressure.signal);
+		json_object_set_number(root_object, "iaq", real_time.iaq.signal);
 
-		float dew_point = CalculateDewPoint(bme680_sensors.temperature, bme680_sensors.humidity);
-
+		float dew_point = CalculateDewPoint(real_time.temperature.signal, real_time.humidity.signal);		
 		json_object_set_number(root_object, "dew_point", dew_point);
+
+		json_object_set_string(root_object, "iaqState", GetIaqState(real_time.iaq.signal));
 	}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
 	{
-
-		//// Allocate memory for a telemetry message to Azure
-		//char *pjsonBuffer = (char *)malloc(JSON_BUFFER_SIZE);
-		//if (pjsonBuffer == NULL) {
-		//	Log_Debug("ERROR: not enough memory to send telemetry");
-		//}
-		//
-		//snprintf(pjsonBuffer, JSON_BUFFER_SIZE, "{\"gX\":\"%.2lf\", \"gY\":\"%.2lf\", \"gZ\":\"%.2lf\", \"aX\": \"%.2f\", \"aY\": \"%.2f\", \"aZ\": \"%.2f\", \"pressure\": \"%.2f\", \"light_intensity\": \"%.2f\", \"altitude\": \"%.2f\", \"temp\": \"%.2f\",  \"rssi\": \"%d\"}",
-		//	angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2], acceleration_mg[0], acceleration_mg[1], acceleration_mg[2], pressure_hPa, light_sensor, altitude, lsm6dsoTemperature_degC, network_data.rssi);
-
-		//Log_Debug("\n[Info] Sending telemetry: %s\n", pjsonBuffer);
-		//
-		//AzureIoT_SendMessage(pjsonBuffer);
-		//free(pjsonBuffer);
 
 		//create json string from object
 		serialized_string = json_serialize_to_string(root_value);
@@ -574,10 +592,9 @@ static int InitPeripheralsAndHandlers(void)
 	{
 		Log_Debug("ERROR: Unable to create socket: %d (%s)\n", errno, strerror(errno));
 		Log_Debug("Real Time Core disabled or Component Id is not correct.\n");
-		Log_Debug("The program will continue without showing light sensor data.\n");
 		// Communication with RT core error
 		RTCore_status = 1;
-		//return -1;
+		return -1;
 	}
 	else
 	{
@@ -614,6 +631,8 @@ static int InitPeripheralsAndHandlers(void)
 	if (initI2c() == -1) {
 		return -1;
 	}
+
+	InitBme680();
 
 	//set up a periodic timer to read the sensors
 
@@ -744,7 +763,6 @@ int main(int argc, char *argv[])
 		if (result < 0) 
 		{
 			// Log_Debug("INFO: Not currently connected to a WiFi network.\n");
-			//// OLED
 			strncpy(network_data.SSID, "Not Connected", 20);
 
 			network_data.frequency_MHz = 0;
@@ -777,7 +795,6 @@ int main(int argc, char *argv[])
 #endif 
 			}
 
-			//// OLED
 
 			memset(network_data.SSID, 0, WIFICONFIG_SSID_MAX_LENGTH);
 			if (network.ssidLength <= SSID_MAX_LEGTH)

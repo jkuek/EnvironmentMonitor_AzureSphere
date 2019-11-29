@@ -18,7 +18,7 @@ static inline void Gpt3_Enable(void)
 	SetReg32(GPT_BASE, 0x50, GPT3_EN);
 }
 
-inline void Gpt3_Disable(void)
+static inline void Gpt3_Disable(void)
 {
 	// GPT_CTRL -> disable timer
 	ClearReg32(GPT_BASE, 0x50, GPT3_EN);

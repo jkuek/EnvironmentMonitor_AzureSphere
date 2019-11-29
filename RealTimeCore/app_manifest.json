@@ -1,0 +1,12 @@
+﻿{
+  "SchemaVersion": 1,
+  "Name": "EnvironmentMonitor_AzureSphere_RealTimeCore",
+  "ComponentId": "54e89e6e-13fb-4dca-a067-279e8f060cf7",
+  "EntryPoint": "/bin/app",
+  "CmdArgs": [],
+  "Capabilities": {
+    "AllowedApplicationConnections": [ "de6e86ef-77ab-4e43-bee4-58f05e87f70c" ],
+    "Adc": [ "ADC-CONTROLLER-0" ]
+  },
+  "ApplicationType": "RealTimeCapable"
+}

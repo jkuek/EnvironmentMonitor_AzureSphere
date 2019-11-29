@@ -1,10 +1,10 @@
-{
+﻿{
   "version": "0.2.1",
   "defaults": {},
   "configurations": [
     {
       "type": "azurespheredbg",
-      "name": "GDB Debugger (RTCore)",
+      "name": "GDB Debugger (HLCore)",
       "project": "CMakeLists.txt",
       "inheritEnvironments": [
         "AzureSphere"
@@ -13,8 +13,9 @@
       "workingDirectory": "${workspaceRoot}",
       "applicationPath": "${debugInfo.target}",
       "imagePath": "${debugInfo.targetImage}",
-      "targetCore": "RTCore",
-      "partnerComponents": [ "685f13af-25a5-40b2-8dd8-8cbc253ecbd8" ]
+      "targetCore": "HLCore",
+      "targetApiSet": "${env.AzureSphereTargetApiSet}",
+      "partnerComponents": [ "54e89e6e-13fb-4dca-a067-279e8f060cf7" ]
     }
   ]
 }

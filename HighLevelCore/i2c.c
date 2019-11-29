@@ -71,13 +71,9 @@ lsm6dso_ctx_t dev_ctx;
 lps22hh_ctx_t pressure_ctx;
 
 
-//used by BME680 driver
-static struct bme680_dev bme680_device;
-
 // Status variables
 uint8_t lsm6dso_status = 1;
 uint8_t lps22hh_status = 1;
-//uint8_t RTCore_status = 1;
 
 //Extern variables
 int i2cFd = -1;
@@ -217,20 +213,6 @@ int initI2c(void) {
 		return -1;
 	}
 
-	// Start OLED
-	if (oled_init())
-	{
-		Log_Debug("OLED not found!\n");
-	}
-	else
-	{
-		Log_Debug("OLED found!\n");
-	}
-
-	// Draw AVNET logo
-	//oled_draw_logo();
-	oled_i2c_bus_status(0);
-
 	// Start lsm6dso specific init
 
 	// Initialize lsm6dso mems driver interface
@@ -243,17 +225,13 @@ int initI2c(void) {
 	if (whoamI != LSM6DSO_ID) {
 		Log_Debug("LSM6DSO not found!\n");
 
-		// OLED update
 		lsm6dso_status = 1;
-		oled_i2c_bus_status(1);
 		return -1;
 	}
 	else {
 		Log_Debug("LSM6DSO Found!\n");
 
-		// OLED update
 		lsm6dso_status = 0;
-		oled_i2c_bus_status(1);
 	}
 		
 	 // Restore default configuration
@@ -301,18 +279,14 @@ int initI2c(void) {
 		if (whoamI != LPS22HH_ID) {
 			Log_Debug("LPS22HH not found!\n");
 			
-			// OLED update
 			lps22hh_status = 1;
-			oled_i2c_bus_status(2);
 
 		}
 		else {
 			lps22hhDetected = true;
 			Log_Debug("LPS22HH Found!\n");
 
-			// OLED update
 			lps22hh_status = 0;
-			oled_i2c_bus_status(2);
 		}
 
 		// Restore the default configuration
@@ -381,8 +355,6 @@ int initI2c(void) {
 	//First read of the accelerometer data is bad, so let's read and burn it here
 	struct AccelerometerData ad;
 	GetNewAccelerometerData(&ad);
-
-	InitBME680();	
 
 	return 0;
 }
@@ -626,214 +598,4 @@ static int32_t lsm6dso_read_lps22hh_cx(void* ctx, uint8_t reg, uint8_t* data, ui
 	lsm6dso_xl_data_rate_set(&dev_ctx, LSM6DSO_XL_ODR_104Hz);
 
 	return ret;
-}
-
-
-void user_delay_ms(uint32_t period)
-{
-	/*
-	 * Return control or wait,
-	 * for a period amount of milliseconds
-	 */
-
-	struct timespec ts;
-	ts.tv_sec = 0;
-	ts.tv_nsec = period * 1000;
-	nanosleep(&ts, NULL);
-}
-
-
-int8_t user_i2c_read(uint8_t dev_id, uint8_t reg_addr, uint8_t* reg_data, uint16_t len)
-{
-	int8_t rslt = 0; /* Return 0 for Success, non-zero for failure */
-
-	//NOTE: the dev_id parameter contains the I2C address 
-
-#ifdef ENABLE_READ_WRITE_DEBUG
-	Log_Debug("I2C read reg %0x len %d\n", reg_addr, len);
-#endif
-
-#if 0
-	I2CMaster_WriteThenRead(i2cFd, dev_id, &reg_addr, 1, reg_data, len);
-#else
-	// Set the register address to read
-	int32_t retVal = I2CMaster_Write(i2cFd, dev_id, &reg_addr, 1);
-	if (retVal < 0) {
-		Log_Debug("ERROR: I2C write: errno=%d (%s)\n", errno, strerror(errno));
-		return -1;
-	}
-
-	uint16_t i = 0;
-
-	/*
-		there seems to be a bug where bad data is returned when reading more than 8 bytes at a time
-		so read in blocks of 8 bytes for now
-	*/
-
-	for (i = 0; i < len; i += 8)
-	{
-		uint16_t readLength = len - i;
-		if (readLength > 8)
-		{
-			readLength = 8;
-		}
-
-		retVal = I2CMaster_Read(i2cFd, dev_id, &reg_data[i], readLength);
-		if (retVal < 0) {
-			Log_Debug("ERROR: I2C read: errno=%d (%s)\n", errno, strerror(errno));
-			return -1;
-		}
-	}
-
-#endif
-
-#ifdef ENABLE_READ_WRITE_DEBUG
-	Log_Debug("Read returned: ");
-	for (int i = 0; i < len; i++) {
-		Log_Debug("%0x: ", bufp[i]);
-	}
-	Log_Debug("\n\n");
-#endif 	   
-
-	return 0;
-
-
-	return rslt;
-}
-
-
-int8_t user_i2c_write(uint8_t dev_id, uint8_t reg_addr, uint8_t* reg_data, uint16_t len)
-{
-	int8_t rslt = 0; /* Return 0 for Success, non-zero for failure */
-
-	//NOTE: the dev_id parameter contains the I2C address 
-
-#ifdef ENABLE_READ_WRITE_DEBUG
-	Log_Debug("I2C read reg %0x len %d\n", reg_addr, len);
-	Log_Debug("buffer contents: ");
-	for (int i = 0; i < len; i++) {
-
-		Log_Debug("%0x: ", reg_data[i]);
-	}
-	Log_Debug("\n");
-#endif 
-
-	// Construct a new command buffer that contains the register to write to, then the data to write
-	uint8_t cmdBuffer[len + 1];
-	cmdBuffer[0] = reg_addr;
-	for (int i = 0; i < len; i++) {
-		cmdBuffer[i + 1] = reg_data[i];
-	}
-
-#ifdef ENABLE_READ_WRITE_DEBUG
-	Log_Debug("cmdBuffer contents: ");
-	for (int i = 0; i < len + 1; i++) {
-
-		Log_Debug("%0x: ", cmdBuffer[i]);
-	}
-	Log_Debug("\n");
-#endif
-
-	// Write the data to the device
-	int32_t retVal = I2CMaster_Write(i2cFd, dev_id, cmdBuffer, (size_t)len + 1);
-	if (retVal < 0) {
-		Log_Debug("ERROR: I2C write: errno=%d (%s)\n", errno, strerror(errno));
-		rslt = -1;
-	}
-#ifdef ENABLE_READ_WRITE_DEBUG
-	else
-	{
-		Log_Debug("Wrote %d bytes to device.\n\n", retVal);
-	}
-#endif
-
-	return rslt;
-}
-
-
-void InitBME680(void)
-{
-	bme680_device.dev_id = BME680_I2C_ADDR_SECONDARY;
-	bme680_device.intf = BME680_I2C_INTF;
-	bme680_device.read = user_i2c_read;
-	bme680_device.write = user_i2c_write;
-	bme680_device.delay_ms = user_delay_ms;
-	/* amb_temp can be set to 25 prior to configuring the gas sensor
-	 * or by performing a few temperature readings without operating the gas sensor.
-	 */
-	bme680_device.amb_temp = 25;
-
-	int8_t rslt = BME680_OK;
-	rslt = bme680_init(&bme680_device);
-
-	//configure the bme680 in forced mode
-
-	uint8_t set_required_settings;
-
-	/* Set the temperature, pressure and humidity settings */
-	bme680_device.tph_sett.os_hum = BME680_OS_2X;
-	bme680_device.tph_sett.os_pres = BME680_OS_4X;
-	bme680_device.tph_sett.os_temp = BME680_OS_8X;
-	bme680_device.tph_sett.filter = BME680_FILTER_SIZE_3;
-
-	/* Set the remaining gas sensor settings and link the heating profile */
-	bme680_device.gas_sett.run_gas = BME680_ENABLE_GAS_MEAS;
-	/* Create a ramp heat waveform in 3 steps */
-	bme680_device.gas_sett.heatr_temp = 320; /* degree Celsius */
-	bme680_device.gas_sett.heatr_dur = 150; /* milliseconds */
-
-	/* Select the power mode */
-	/* Must be set before writing the sensor configuration */
-	bme680_device.power_mode = BME680_FORCED_MODE;
-
-	/* Set the required sensor settings needed */
-	set_required_settings = BME680_OST_SEL | BME680_OSP_SEL | BME680_OSH_SEL | BME680_FILTER_SEL
-		| BME680_GAS_SENSOR_SEL;
-
-	/* Set the desired sensor configuration */
-	rslt = bme680_set_sensor_settings(set_required_settings, &bme680_device);
-
-	/* Set the power mode */
-	rslt = bme680_set_sensor_mode(&bme680_device);
-
-}
-
-
-bool ReadBME680(struct Bme680Data* bd)
-{
-	int8_t rslt = BME680_OK;
-	/* Get the total measurement duration so as to sleep or wait till the measurement is complete */
-	uint16_t meas_period;
-	bme680_get_profile_dur(&meas_period, &bme680_device);
-
-	struct bme680_field_data data;
-
-	user_delay_ms(meas_period); /* Delay till the measurement is ready */
-
-	rslt = bme680_get_sensor_data(&data, &bme680_device);
-
-	if (rslt != BME680_OK)
-	{
-		return false;
-	}
-
-	bd->temperature = data.temperature / 100.0f;
-	bd->humidity = data.humidity / 1000.0f;
-	bd->pressure = data.pressure / 100.0f;
-
-	Log_Debug("T: %.2f degC, P: %.2f hPa, H %.2f %%rH ", data.temperature / 100.0f,
-		data.pressure / 100.0f, data.humidity / 1000.0f);
-
-	/* Avoid using measurements from an unstable heating setup */
-	if (data.status & BME680_GASM_VALID_MSK)
-		Log_Debug(", G: %d ohms", data.gas_resistance);
-
-	Log_Debug("\n");
-
-	/* Trigger the next measurement if you would like to read data out continuously */
-	if (bme680_device.power_mode == BME680_FORCED_MODE) {
-		rslt = bme680_set_sensor_mode(&bme680_device);
-	}
-
-	return (rslt == BME680_OK);
 }
