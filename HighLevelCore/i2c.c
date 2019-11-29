@@ -74,7 +74,6 @@ lps22hh_ctx_t pressure_ctx;
 // Status variables
 uint8_t lsm6dso_status = 1;
 uint8_t lps22hh_status = 1;
-//uint8_t RTCore_status = 1;
 
 //Extern variables
 int i2cFd = -1;

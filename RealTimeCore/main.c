@@ -372,9 +372,6 @@ static _Noreturn void RTCoreMain(void)
         uint8_t buf[256];
         uint32_t dataSize = sizeof(buf);		
 
-		// update ambient noise sample, this will block for ~105 ms
-		uint32_t ambient_noise = 0;// GetAmbientNoiseLevel();
-
         // On success, dataSize is set to the actual number of bytes which were read.
         int r = DequeueData(outbound, inbound, sharedBufSize, buf, &dataSize);
 
@@ -397,6 +394,9 @@ static _Noreturn void RTCoreMain(void)
 
 		// Read ADC channel 0 (ambient light)
 		outputPayload.ambient_light = ReadAdc(0);
+		// update ambient noise sample, this will block for ~105 ms
+		uint32_t ambient_noise = GetAmbientNoiseLevel();
+
 		outputPayload.ambient_noise = ambient_noise;
 		
 		uint32_t mV = (outputPayload.ambient_light * 2500) / 0xFFF;

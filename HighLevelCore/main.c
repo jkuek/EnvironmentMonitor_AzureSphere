@@ -123,7 +123,7 @@ static void SendMessageToRTCore(void);
 static void TimerEventHandler(EventData *eventData);
 static void SocketEventHandler(EventData *eventData);
 static int timerFd = -1;
-uint8_t RTCore_status;
+uint8_t RTCore_status = 1;
 
 // event handler data structures. Only the event handler field needs to be populated.
 static EventData timerEventData = { .eventHandler = &TimerEventHandler };
@@ -378,11 +378,6 @@ static void TimerEventHandler(EventData *eventData)
 /// </summary>
 static void SendMessageToRTCore(void)
 {
-	//static char txMessage[256];
-
-	//Log_Debug("Sending: %s\n", txMessage);
-
-	//int bytesSent = send(sockFd, txMessage, strlen(txMessage), 0);
 	int bytesSent = send(sockFd, (void *)&outputPayload, sizeof(outputPayload), 0);
 	if (bytesSent == -1)
 	{
@@ -420,6 +415,43 @@ float CalculateDewPoint(float temperature, float relative_humidity)
 	float dew_point = (b * alpha) / (a - alpha);
 
 	return dew_point;
+}
+
+const char* GetIaqState(int iaq)
+{
+	char* result;
+
+	if (iaq < 50)
+	{
+		result = "Excellent";
+	}
+	else if (iaq < 100)
+	{
+		result = "Good";
+	}
+	else if (iaq < 150)
+	{
+		result = "Light";
+	}
+	else if (iaq < 200)
+	{
+		result = "Moderate";
+	}
+	else if (iaq < 250)
+	{
+		result = "Heavy";
+	}
+	else if (iaq < 350)
+	{
+		result = "Severe";
+	}
+	else
+	{
+		result = "Extreme";
+	}
+
+
+	return result;
 }
 
 
@@ -509,9 +541,10 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 		json_object_set_number(root_object, "pressure", real_time.rawPressure.signal);
 		json_object_set_number(root_object, "iaq", real_time.iaq.signal);
 
-		float dew_point = CalculateDewPoint(real_time.temperature.signal, real_time.humidity.signal);
-
+		float dew_point = CalculateDewPoint(real_time.temperature.signal, real_time.humidity.signal);		
 		json_object_set_number(root_object, "dew_point", dew_point);
+
+		json_object_set_string(root_object, "iaqState", GetIaqState(real_time.iaq.signal));
 	}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))
@@ -559,10 +592,9 @@ static int InitPeripheralsAndHandlers(void)
 	{
 		Log_Debug("ERROR: Unable to create socket: %d (%s)\n", errno, strerror(errno));
 		Log_Debug("Real Time Core disabled or Component Id is not correct.\n");
-		Log_Debug("The program will continue without showing light sensor data.\n");
 		// Communication with RT core error
 		RTCore_status = 1;
-		//return -1;
+		return -1;
 	}
 	else
 	{
