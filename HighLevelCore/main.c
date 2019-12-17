@@ -62,6 +62,8 @@ struct real_time_inputs
 	float humidity; /*! Relative humidity in % */
 	float gas_resistance; /*! Gas resistance in Ohms */
 
+	//float temperature_offset; /* offset to counter the self-heating effects, degrees C */
+
 } outputPayload;
 
 struct real_time_outputs
@@ -178,11 +180,11 @@ void SendTelemetryDataToAzure(void) {
 	JSON_Value* root_value = json_value_init_object();
 	JSON_Object* root_object = json_value_get_object(root_value);
 	char* serialized_string = NULL;
-	//json_object_set_string(root_object, "name", "John Smith");
+
 	json_object_set_number(root_object, "temperature", telemetryData.temperature);
 	json_object_set_number(root_object, "pressure", telemetryData.pressure);
 	json_object_set_number(root_object, "humidity", telemetryData.humidity);
-	//json_object_set_number(root_object, "iaq", 2);
+
 	if (RTCore_status == 0)
 	{
 		//we have comms with the M4 app, so these values should be good
@@ -360,6 +362,7 @@ static void TimerEventHandler(EventData *eventData)
 		outputPayload.pressure = bme680_data.pressure;
 		outputPayload.gas_resistance = bme680_data.gas_resistance;
 
+		//outputPayload.temperature_offset = 7.0; //empirically measured
 
 		//print raw values for debug
 		Log_Debug("BME680: T = %.2f, H = %.2f, P = %.2f, G = %.2f\n",
@@ -417,37 +420,50 @@ float CalculateDewPoint(float temperature, float relative_humidity)
 	return dew_point;
 }
 
-const char* GetIaqState(int iaq)
-{
-	char* result;
 
-	if (iaq < 50)
+char* iaq_state_text[] =
+{
+	"Excellent",
+	"Good",
+	"Light",
+	"Moderate",
+	"Heavy",
+	"Severe",
+	"Extreme",
+	"Unknown"
+};
+
+enum iaq_state GetIaqState(int iaq)
+{
+	enum iaq_state result;
+
+	if (iaq <= 50)
 	{
-		result = "Excellent";
+		result = IAQ_EXCELLENT;
 	}
-	else if (iaq < 100)
+	else if (iaq <= 100)
 	{
-		result = "Good";
+		result = IAQ_GOOD;
 	}
-	else if (iaq < 150)
+	else if (iaq <= 150)
 	{
-		result = "Light";
+		result = IAQ_LIGHT;
 	}
-	else if (iaq < 200)
+	else if (iaq <= 200)
 	{
-		result = "Moderate";
+		result = IAQ_MODERATE;
 	}
-	else if (iaq < 250)
+	else if (iaq <= 250)
 	{
-		result = "Heavy";
+		result = IAQ_HEAVY;
 	}
-	else if (iaq < 350)
+	else if (iaq <= 350)
 	{
-		result = "Severe";
+		result = IAQ_SEVERE;
 	}
 	else
 	{
-		result = "Extreme";
+		result = IAQ_EXTREME;
 	}
 
 
@@ -532,6 +548,8 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 
 		Log_Debug("ALSPT19: Ambient Light[Lux] : %.2f\n", light_sensor);
 
+
+		//TODO: convert ambient noise into LOW, MODERATE, HIGH
 	}	
 
 	//if (ReadBME680(&bme680_sensors))
@@ -544,7 +562,10 @@ void ReadSensorTimerEventHandler(EventData* eventData)
 		float dew_point = CalculateDewPoint(real_time.temperature.signal, real_time.humidity.signal);		
 		json_object_set_number(root_object, "dew_point", dew_point);
 
-		json_object_set_string(root_object, "iaqState", GetIaqState(real_time.iaq.signal));
+		enum iaq_state iaq = GetIaqState(real_time.iaq.signal);
+		json_object_set_string(root_object, "iaqState", iaq_state_text[iaq]);
+
+
 	}
 
 #if (defined(IOT_CENTRAL_APPLICATION) || defined(IOT_HUB_APPLICATION))

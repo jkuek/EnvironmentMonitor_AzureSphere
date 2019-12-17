@@ -4,6 +4,18 @@
 #include "bme680.h"
 #include "bsec_datatypes.h"
 
+enum iaq_state
+{
+	IAQ_EXCELLENT,
+	IAQ_GOOD,
+	IAQ_LIGHT,
+	IAQ_MODERATE,
+	IAQ_HEAVY,
+	IAQ_SEVERE,
+	IAQ_EXTREME,
+	IAQ_UNKNOWN
+};
+
 
 struct bme680_output
 {

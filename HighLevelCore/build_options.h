@@ -25,7 +25,7 @@
 
 
 // How often the sensors should be read
-#define SENSOR_READ_INTERVAL_SECONDS 5
+#define SENSOR_READ_INTERVAL_SECONDS 60
 
 // Enables I2C read/write debug
 //#define ENABLE_READ_WRITE_DEBUG

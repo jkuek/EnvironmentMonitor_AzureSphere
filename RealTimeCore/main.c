@@ -34,6 +34,7 @@ struct bme680_raw_data
 	float humidity; /*! Relative humidity in % */
 	float gas_resistance; /*! Gas resistance in Ohms */
 
+//	float temperature_offset; /* offset to counter the self-heating effects, degrees C */
 } bme680_data;
 
 struct real_time_outputs
@@ -260,6 +261,14 @@ static void ProcessBsec(struct bme680_raw_data * bme680_data)
 		inputs[input_count].time_stamp = bme680_data->timestamp_ns;
 		inputs[input_count].signal = bme680_data->temperature;
 		input_count++;
+
+		/* Also add optional heatsource input which will be subtracted from the temperature reading to
+		* compensate for device-specific self-heating (supported in BSEC IAQ solution)*/
+		//inputs[input_count].sensor_id = BSEC_INPUT_HEATSOURCE;
+		//inputs[input_count].time_stamp = bme680_data->timestamp_ns;
+		//inputs[input_count].signal = 7; // bme680_data->temperature_offset;
+		//input_count++;
+
 	}
 
 	//if (process_data & BSEC_PROCESS_HUMIDITY)
